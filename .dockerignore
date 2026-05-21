@@ -1,10 +1,35 @@
+# Git / VCS
 .git
 .github
+.gitignore
+.gitattributes
+
+# Build artifacts
 Kiro-Go
+/kiro-go
+/kiro-go.exe
+*.exe
+*.test
+*.out
+
+# Runtime data (must NOT ship into the image — secrets live here)
 data
+*.log
+
+# Editor / OS
+.idea
+.vscode
+.claude
+.DS_Store
+Thumbs.db
+
+# Zeabur local CLI context (contains personal project/service IDs)
+.zeabur
+
+# Docs / scratch / backups
 backup*
 PR-*.md
-docker-compose.yml
+*.har
 README.md
 README_CN.md
-*.log
+docker-compose.yml

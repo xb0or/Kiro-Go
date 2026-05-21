@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 func main() {
@@ -57,7 +58,19 @@ func main() {
 	handler := proxy.NewHandler()
 
 	// 启动服务器
-	addr := fmt.Sprintf("%s:%d", config.GetHost(), config.GetPort())
+	host := config.GetHost()
+	port := config.GetPort()
+
+	// Zeabur / Heroku / Cloud Run 等平台会通过 $PORT 注入端口；
+	// 容器场景下默认绑 0.0.0.0 才能被外部健康检查访问。
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		if p, err := strconv.Atoi(envPort); err == nil && p > 0 {
+			port = p
+			host = "0.0.0.0"
+		}
+	}
+
+	addr := fmt.Sprintf("%s:%d", host, port)
 	logger.Infof("Kiro-Go starting on http://%s (log level: %s)", addr, logger.LevelName(logger.GetLevel()))
 	logger.Infof("Admin panel: http://%s/admin", addr)
 	logger.Infof("Claude API: http://%s/v1/messages", addr)
