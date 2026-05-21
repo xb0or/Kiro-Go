@@ -1422,9 +1422,19 @@
                 'accounts.weight': '权重',
                 'detail.weight': '请求权重',
                 'detail.weightHint': '0-1=普通, 2+=高优先级',
-                'detail.overage': '超额调用设置',
-                'detail.allowOverage': '配额耗尽后继续调用',
-                'detail.overageHint': '超额后调用频率权重（1~10），值越大频率越高',
+                'detail.overage': '超额调用（Overages）',
+                'detail.overageHint': '点击开关将调用 AWS Q setUserPreference，立即在 Kiro 后台开/关 Overages',
+                'detail.overageStatus': '当前状态',
+                'detail.overageEnabled': '已开启（额度耗尽后按 Overage 单价继续计费）',
+                'detail.overageDisabled': '已关闭（额度耗尽即停止）',
+                'detail.overageUnknown': '未知（请刷新）',
+                'detail.overageRefresh': '从 AWS 拉取',
+                'detail.overageCap': 'Overage 上限',
+                'detail.overageRate': 'Overage 单价',
+                'detail.overageCurrent': '已产生超额',
+                'detail.overageCheckedAt': '上次同步',
+                'detail.overageNotCapable': '该订阅当前不支持 Overages',
+                'detail.overageSwitching': '正在调用 AWS...',
                 'detail.proxyURL': '独立代理',
                 'detail.proxyHint': '留空则使用全局代理，格式: socks5://host:port 或 http://host:port',
                 'detail.proxySaved': '代理已保存',
@@ -1434,7 +1444,9 @@
                 'accounts.testFailed': '测试失败',
                 'accounts.selectModel': '选择测试模型',
                 'detail.save': '保存',
-                'detail.overageWeight': '超额调用权重',
+                'accounts.overageOn': '超额开',
+                'accounts.overageOff': '超额关',
+                'accounts.overageSwitchFailed': '开关切换失败',
                 'accounts.testLog.title': '测试日志',
                 'accounts.testLog.clear': '清空',
                 'accounts.testLog.hide': '隐藏',
@@ -1703,9 +1715,19 @@
                 'accounts.weight': 'Weight',
                 'detail.weight': 'Request Weight',
                 'detail.weightHint': '0-1=normal, 2+=higher priority',
-                'detail.overage': 'Overage Settings',
-                'detail.allowOverage': 'Continue calling after quota is exhausted',
-                'detail.overageHint': 'Call frequency weight when over quota (1–10); higher = more frequent',
+                'detail.overage': 'Overages (Upstream)',
+                'detail.overageHint': 'Toggling calls AWS Q setUserPreference and flips Overages in your Kiro account immediately',
+                'detail.overageStatus': 'Current status',
+                'detail.overageEnabled': 'Enabled (continues billing at overage rate when quota is exhausted)',
+                'detail.overageDisabled': 'Disabled (stops once quota is exhausted)',
+                'detail.overageUnknown': 'Unknown (please refresh)',
+                'detail.overageRefresh': 'Pull from AWS',
+                'detail.overageCap': 'Overage cap',
+                'detail.overageRate': 'Overage rate',
+                'detail.overageCurrent': 'Current overages',
+                'detail.overageCheckedAt': 'Last synced',
+                'detail.overageNotCapable': 'This subscription does not support Overages',
+                'detail.overageSwitching': 'Calling AWS...',
                 'detail.proxyURL': 'Account Proxy',
                 'detail.proxyHint': 'Leave empty to use global proxy. Format: socks5://host:port or http://host:port',
                 'detail.proxySaved': 'Proxy saved',
@@ -1715,7 +1737,9 @@
                 'accounts.testFailed': 'Test Failed',
                 'accounts.selectModel': 'Select Test Model',
                 'detail.save': 'Save',
-                'detail.overageWeight': 'Overage Weight',
+                'accounts.overageOn': 'Overage:ON',
+                'accounts.overageOff': 'Overage:OFF',
+                'accounts.overageSwitchFailed': 'Overage switch failed',
                 'accounts.testLog.title': 'Test Log',
                 'accounts.testLog.clear': 'Clear',
                 'accounts.testLog.hide': 'Hide',
@@ -2044,7 +2068,7 @@
                 const isSelected = selectedAccounts.has(a.id);
                 const weightVal = a.weight || 0;
                 const weightBadge = weightVal >= 2 ? '<span class="badge" style="background:#f59e0b;color:#fff">W:' + weightVal + '</span>' : '';
-                const overageBadge = a.allowOverage ? '<span class="badge badge-warning">' + t('accounts.overage') + ':' + (a.overageWeight || 1) + '</span>' : '';
+                const overageBadge = renderOverageBadge(a);
                 return '<div class="account-card" style="' + (isSelected ? 'border-color:#7c3aed;background:#faf5ff' : '') + '">' +
                     '<div class="account-header">' +
                     '<div class="account-info" style="display:flex;align-items:center;gap:8px">' +
@@ -2195,16 +2219,9 @@
                 '</div>' +
                 '<button class="btn btn-sm btn-primary" onclick="saveWeight(\'' + id + '\')">' + t('detail.save') + '</button>' +
                 '</div>' +
-                '<div class="detail-section"><h4>' + t('detail.overage') + '</h4>' +
-                '<div class="form-group">' +
-                '<label style="display:flex;align-items:center;gap:10px"><label class="switch" style="margin:0"><input type="checkbox" id="allowOverageInput" ' + (a.allowOverage ? 'checked' : '') + '><span class="slider"></span></label><span>' + t('detail.allowOverage') + '</span></label>' +
-                '</div>' +
-                '<div class="form-group" style="margin-bottom:8px">' +
-                '<label>' + t('detail.overageWeight') + '</label>' +
-                '<input type="number" id="overageWeightInput" value="' + (a.overageWeight || 1) + '" min="1" max="10">' +
-                '<small style="color:#64748b;font-size:12px;margin-top:4px;display:block">' + t('detail.overageHint') + '</small>' +
-                '</div>' +
-                '<button class="btn btn-sm btn-primary" onclick="saveOverageSettings(\'' + id + '\')">' + t('detail.save') + '</button>' +
+                '<div class="detail-section"><h4>' + t('detail.overage') + ' <button class="btn btn-sm btn-secondary" onclick="refreshAccountOverage(\'' + id + '\')" style="margin-left:8px">' + t('detail.overageRefresh') + '</button></h4>' +
+                '<p style="color:#64748b;font-size:12px;margin:0 0 10px 0">' + t('detail.overageHint') + '</p>' +
+                renderOverageBlock(a) +
                 '</div>' +
                 '<div class="detail-section"><h4>' + t('detail.proxyURL') + '</h4><div class="machine-id-row">' +
                 '<input type="text" id="proxyURLInput" value="' + (a.proxyURL || '') + '" placeholder="socks5://host:port" style="flex:1">' +
@@ -2288,19 +2305,80 @@
                 if (d.success) { alert(t('detail.saved')); loadAccounts(); } else { alert(t('detail.saveFailed') + ': ' + d.error); }
             } catch (e) { alert(t('detail.saveFailed')); }
         }
-        async function saveOverageSettings(id) {
-            const allowOverage = document.getElementById('allowOverageInput').checked;
-            let overageWeight = parseInt(document.getElementById('overageWeightInput').value) || 1;
-            overageWeight = Math.max(1, Math.min(10, overageWeight));
-            document.getElementById('overageWeightInput').value = overageWeight;
+        function renderOverageBadge(a) {
+            const status = (a.overageStatus || '').toUpperCase();
+            if (status === 'ENABLED') {
+                return '<span class="badge badge-warning">' + t('accounts.overageOn') + '</span>';
+            }
+            if (status === 'DISABLED') {
+                return '<span class="badge" style="background:#94a3b8;color:#fff">' + t('accounts.overageOff') + '</span>';
+            }
+            return '';
+        }
+        function renderOverageBlock(a) {
+            const status = (a.overageStatus || '').toUpperCase();
+            const capable = !a.overageCapability || a.overageCapability === 'OVERAGE_CAPABLE';
+            const checked = status === 'ENABLED';
+            const checkedAt = a.overageCheckedAt ? new Date(a.overageCheckedAt * 1000).toLocaleString() : '-';
+            const statusText = status === 'ENABLED' ? t('detail.overageEnabled')
+                : status === 'DISABLED' ? t('detail.overageDisabled')
+                : t('detail.overageUnknown');
+            const disabledAttr = capable ? '' : ' disabled';
+            return '<div class="form-group" style="display:flex;align-items:center;gap:10px;margin-bottom:10px">' +
+                '<label class="switch" style="margin:0"><input type="checkbox" id="overageSwitchInput-' + a.id + '" ' + (checked ? 'checked' : '') + disabledAttr + ' onchange="toggleOverageSwitch(\'' + a.id + '\', this)"><span class="slider"></span></label>' +
+                '<span id="overageSwitchLabel-' + a.id + '">' + statusText + '</span>' +
+                '</div>' +
+                (capable ? '' : '<p style="color:#ef4444;font-size:12px;margin:0 0 8px 0">' + t('detail.overageNotCapable') + '</p>') +
+                '<div class="detail-grid">' +
+                '<div class="detail-item"><div class="detail-label">' + t('detail.overageStatus') + '</div><div class="detail-value">' + (status || '-') + '</div></div>' +
+                '<div class="detail-item"><div class="detail-label">' + t('detail.overageCap') + '</div><div class="detail-value">' + (a.overageCap ? '$' + Number(a.overageCap).toFixed(2) : '-') + '</div></div>' +
+                '<div class="detail-item"><div class="detail-label">' + t('detail.overageRate') + '</div><div class="detail-value">' + (a.overageRate ? '$' + Number(a.overageRate).toFixed(4) : '-') + '</div></div>' +
+                '<div class="detail-item"><div class="detail-label">' + t('detail.overageCurrent') + '</div><div class="detail-value">' + (a.currentOverages ? '$' + Number(a.currentOverages).toFixed(4) : '$0') + '</div></div>' +
+                '<div class="detail-item"><div class="detail-label">' + t('detail.overageCheckedAt') + '</div><div class="detail-value">' + checkedAt + '</div></div>' +
+                '</div>';
+        }
+        async function toggleOverageSwitch(id, inputEl) {
+            const desired = inputEl.checked;
+            const labelEl = document.getElementById('overageSwitchLabel-' + id);
+            const oldLabel = labelEl ? labelEl.textContent : '';
+            inputEl.disabled = true;
+            if (labelEl) labelEl.textContent = t('detail.overageSwitching');
             try {
-                const res = await fetch('/admin/api/accounts/' + id, {
-                    method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
-                    body: JSON.stringify({ allowOverage, overageWeight })
+                const res = await fetch('/admin/api/accounts/' + id + '/overage', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
+                    body: JSON.stringify({ enabled: desired })
                 });
                 const d = await res.json();
-                if (d.success) { alert(t('detail.saved')); loadAccounts(); } else { alert(t('detail.saveFailed') + ': ' + d.error); }
-            } catch (e) { alert(t('detail.saveFailed')); }
+                if (d.success) {
+                    if (labelEl) {
+                        labelEl.textContent = d.overageStatus === 'ENABLED' ? t('detail.overageEnabled')
+                            : d.overageStatus === 'DISABLED' ? t('detail.overageDisabled')
+                            : t('detail.overageUnknown');
+                    }
+                    inputEl.checked = d.overageStatus === 'ENABLED';
+                    loadAccounts();
+                } else {
+                    inputEl.checked = !desired;
+                    if (labelEl) labelEl.textContent = oldLabel;
+                    alert(t('accounts.overageSwitchFailed') + ': ' + (d.error || ''));
+                }
+            } catch (e) {
+                inputEl.checked = !desired;
+                if (labelEl) labelEl.textContent = oldLabel;
+                alert(t('accounts.overageSwitchFailed'));
+            } finally {
+                inputEl.disabled = false;
+            }
+        }
+        async function refreshAccountOverage(id) {
+            try {
+                const res = await fetch('/admin/api/accounts/' + id + '/overage', {
+                    method: 'GET', headers: { 'X-Admin-Password': password }
+                });
+                const d = await res.json();
+                if (d.success) { showDetail(id); loadAccounts(); }
+                else { alert(t('accounts.overageSwitchFailed') + ': ' + (d.error || '')); }
+            } catch (e) { alert(t('accounts.overageSwitchFailed')); }
         }
         async function saveProxyURL(id) {
             const proxyURL = document.getElementById('proxyURLInput').value.trim();

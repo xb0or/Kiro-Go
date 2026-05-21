@@ -58,9 +58,15 @@ type Account struct {
 	// Priority weight for load balancing (higher = more requests)
 	Weight int `json:"weight,omitempty"` // 0 or 1 = normal, 2+ = higher priority
 
-	// Overage behavior after the main usage limit is reached.
-	AllowOverage  bool `json:"allowOverage,omitempty"`  // Whether to keep using the account after UsageLimit is reached
-	OverageWeight int  `json:"overageWeight,omitempty"` // 1-10, lower values reduce overage request frequency
+	// Upstream Overages state (mirrored from AWS Q `setUserPreference` / `getUsageLimits`).
+	// OverageStatus is the only switch that decides whether to keep dispatching once UsageLimit is reached.
+	// Allowed values: "ENABLED", "DISABLED", "UNKNOWN" (or empty when not yet fetched).
+	OverageStatus     string  `json:"overageStatus,omitempty"`
+	OverageCapability string  `json:"overageCapability,omitempty"` // "OVERAGE_CAPABLE" / "NOT_OVERAGE_CAPABLE"
+	OverageCap        float64 `json:"overageCap,omitempty"`        // Hard upper bound (USD)
+	OverageRate       float64 `json:"overageRate,omitempty"`       // Per-invocation rate (USD)
+	CurrentOverages   float64 `json:"currentOverages,omitempty"`   // Cumulative overage charges (USD)
+	OverageCheckedAt  int64   `json:"overageCheckedAt,omitempty"`  // Last successful upstream sync (Unix seconds)
 
 	// Account status
 	Enabled   bool   `json:"enabled"`             // Whether account is active in the pool
@@ -326,13 +332,25 @@ func UpdateAccount(id string, account Account) error {
 	return nil
 }
 
-// DisableAccountOverage turns off AllowOverage for a specific account.
-func DisableAccountOverage(id string) error {
+// UpdateAccountOverageStatus persists the cached upstream overage status fields.
+// Called after a successful setUserPreference or getUsageLimits round-trip.
+func UpdateAccountOverageStatus(id, status, capability string, cap, rate, current float64, checkedAt int64) error {
 	cfgLock.Lock()
 	defer cfgLock.Unlock()
 	for i, a := range cfg.Accounts {
 		if a.ID == id {
-			cfg.Accounts[i].AllowOverage = false
+			if status != "" {
+				cfg.Accounts[i].OverageStatus = status
+			}
+			if capability != "" {
+				cfg.Accounts[i].OverageCapability = capability
+			}
+			cfg.Accounts[i].OverageCap = cap
+			cfg.Accounts[i].OverageRate = rate
+			cfg.Accounts[i].CurrentOverages = current
+			if checkedAt > 0 {
+				cfg.Accounts[i].OverageCheckedAt = checkedAt
+			}
 			return Save()
 		}
 	}
