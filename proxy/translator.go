@@ -174,6 +174,31 @@ type ClaudeUsage struct {
 
 const maxToolDescLen = 10237
 
+// Write/Edit 工具描述补丁：强制模型遵守 Kiro 后端的单次输出长度限制，
+// 规避 "Write Failed" 与会话卡死（参考 hank9999/kiro.rs 的实现）。
+const (
+	writeToolDescriptionSuffix = "- IMPORTANT: If the content to write exceeds 150 lines, you MUST only write the first 50 lines using this tool, then use `Edit` tool to append the remaining content in chunks of no more than 50 lines each. If needed, leave a unique placeholder to help append content. Do NOT attempt to write all content at once."
+	editToolDescriptionSuffix  = "- IMPORTANT: If the `new_string` content exceeds 50 lines, you MUST split it into multiple Edit calls, each replacing no more than 50 lines at a time. If used to append content, leave a unique placeholder to help append content. On the final chunk, do NOT include the placeholder."
+)
+
+// appendToolDescriptionSuffix 根据工具名追加 chunked 写入策略后缀。
+// 仅对 Write/Edit 生效，其它工具保持原描述。
+func appendToolDescriptionSuffix(name, desc string) string {
+	var suffix string
+	switch name {
+	case "Write":
+		suffix = writeToolDescriptionSuffix
+	case "Edit":
+		suffix = editToolDescriptionSuffix
+	default:
+		return desc
+	}
+	if desc == "" {
+		return suffix
+	}
+	return desc + "\n" + suffix
+}
+
 func ClaudeToKiro(req *ClaudeRequest, thinking bool) *KiroPayload {
 	modelID := MapModel(req.Model)
 	origin := "AI_EDITOR"
@@ -717,7 +742,7 @@ func convertClaudeTools(tools []ClaudeTool) ([]KiroToolWrapper, map[string]strin
 	result := make([]KiroToolWrapper, 0, len(tools))
 	nameMap := make(map[string]string)
 	for _, tool := range tools {
-		desc := tool.Description
+		desc := appendToolDescriptionSuffix(tool.Name, tool.Description)
 		if len(desc) > maxToolDescLen {
 			desc = desc[:maxToolDescLen] + "..."
 		}
@@ -1483,7 +1508,7 @@ func convertOpenAITools(tools []OpenAITool) []KiroToolWrapper {
 		if tool.Type != "function" {
 			continue
 		}
-		desc := tool.Function.Description
+		desc := appendToolDescriptionSuffix(tool.Function.Name, tool.Function.Description)
 		if len(desc) > maxToolDescLen {
 			desc = desc[:maxToolDescLen] + "..."
 		}
