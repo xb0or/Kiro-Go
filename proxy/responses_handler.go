@@ -59,13 +59,18 @@ func (h *Handler) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) 
 	}
 
 	finalMessages := make([]OpenAIMessage, 0, len(historyMessages)+len(inputMessages)+1)
-	if strings.TrimSpace(req.Instructions) != "" && req.PreviousResponseID == "" {
+	finalMessages = append(finalMessages, historyMessages...)
+	if strings.TrimSpace(req.Instructions) != "" {
+		// New instructions on this turn always take effect, even when
+		// continuing from previous_response_id. Place them after the
+		// expanded history so they apply to the current and future turns,
+		// while ancestor instructions (re-emitted by expandPreviousResponseHistory)
+		// stay in scope for the historical exchanges they shaped.
 		finalMessages = append(finalMessages, OpenAIMessage{
 			Role:    "system",
 			Content: req.Instructions,
 		})
 	}
-	finalMessages = append(finalMessages, historyMessages...)
 	finalMessages = append(finalMessages, inputMessages...)
 
 	if len(finalMessages) == 0 {

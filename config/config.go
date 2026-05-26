@@ -268,14 +268,17 @@ func Load() error {
 	cfg = &c
 
 	// Migration: if a legacy single ApiKey is present and the new ApiKeys list is empty,
-	// promote it into the new structure. The legacy field is kept for backward compatibility
-	// when reading older config files.
+	// promote it into the new structure. The migrated entry inherits the legacy
+	// RequireApiKey state — if the legacy deployment was public (RequireApiKey=false),
+	// we mark the entry disabled so it doesn't accidentally start enforcing auth.
+	// Operators can flip it on later from the admin UI. The legacy field is kept
+	// for backward compatibility when reading older config files.
 	if cfg.ApiKey != "" && len(cfg.ApiKeys) == 0 {
 		cfg.ApiKeys = append(cfg.ApiKeys, ApiKeyEntry{
 			ID:        newUUID(),
 			Name:      "legacy",
 			Key:       cfg.ApiKey,
-			Enabled:   true,
+			Enabled:   cfg.RequireApiKey,
 			Migrated:  true,
 			CreatedAt: time.Now().Unix(),
 		})

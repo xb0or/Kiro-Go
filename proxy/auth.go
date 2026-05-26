@@ -38,17 +38,25 @@ func extractProvidedKey(r *http.Request) string {
 
 // authenticate validates an incoming request against the configured API keys.
 //
-// Resolution order:
-//  1. If the multi-key list is non-empty, the provided key MUST match an enabled, in-quota
-//     entry. Returns the matched entry (a copy) so callers can attribute usage.
-//  2. If the multi-key list is empty, fall back to the legacy single ApiKey field guarded
-//     by RequireApiKey. This branch only fires for configs that opt out of migration or
-//     manually clear ApiKeys at runtime.
+// Master switch: config.RequireApiKey. When false, requests pass without checking
+// any keys, even if entries exist (so the admin UI can hold draft keys without
+// affecting public deployments).
 //
-// Returns (entry, nil) on success. entry is nil when the legacy single-key fallback is used
-// (since there is nothing to attribute usage to). On failure returns an *authError indicating
-// the appropriate HTTP status and message.
+// When RequireApiKey is true:
+//  1. If ApiKeys is non-empty, the provided key MUST match an enabled, in-quota
+//     entry. Returns the matched entry (a copy) so callers can attribute usage.
+//  2. Else if the legacy single ApiKey field is set, the provided key MUST match it.
+//  3. Else (switch on but nothing configured) → fail-closed: every request is rejected.
+//     This prevents the prior bug where toggling auth on without keys silently
+//     left the service open.
+//
+// Returns (entry, nil) on success. entry is nil when the legacy single-key path
+// is used or when the master switch is off.
 func (h *Handler) authenticate(r *http.Request) (*config.ApiKeyEntry, error) {
+	if !config.IsApiKeyRequired() {
+		return nil, nil
+	}
+
 	provided := extractProvidedKey(r)
 
 	if config.HasApiKeys() {
@@ -71,13 +79,11 @@ func (h *Handler) authenticate(r *http.Request) (*config.ApiKeyEntry, error) {
 		return entry, nil
 	}
 
-	// Legacy single-key fallback.
-	if !config.IsApiKeyRequired() {
-		return nil, nil
-	}
+	// Legacy single-key path.
 	expected := config.GetApiKey()
 	if expected == "" {
-		return nil, nil
+		// Auth required but nothing configured → fail closed.
+		return nil, newAuthError(http.StatusUnauthorized, "authentication_error", "API key authentication is required but no keys are configured")
 	}
 	if provided == "" || provided != expected {
 		return nil, newAuthError(http.StatusUnauthorized, "authentication_error", "Invalid or missing API key")

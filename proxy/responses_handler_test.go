@@ -145,6 +145,118 @@ func TestResponsesPreviousResponseIDExpands(t *testing.T) {
 	}
 }
 
+// A → B → C: when expanding history starting from C, all of A's and B's
+// inputs/outputs must appear before C's. Previously only C's direct parent
+// (B) was emitted, dropping A entirely.
+func TestResponsesPreviousResponseIDExpandsFullChain(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Init(cfgFile); err != nil {
+		t.Fatalf("config.Init: %v", err)
+	}
+
+	a := &ResponsesObject{
+		ID:           "resp_a",
+		Object:       "response",
+		Status:       "completed",
+		Model:        "claude-sonnet-4.5",
+		StoredInput:  json.RawMessage(`"turn A user"`),
+		StoredAt:     time.Now().Unix(),
+		Instructions: "be terse",
+		Output: []ResponseOutputItem{{
+			Type: "message", Role: "assistant",
+			Content: []ResponseContentPart{{Type: "output_text", Text: "turn A assistant"}},
+		}},
+	}
+	b := &ResponsesObject{
+		ID:                 "resp_b",
+		Object:             "response",
+		Status:             "completed",
+		Model:              "claude-sonnet-4.5",
+		StoredInput:        json.RawMessage(`"turn B user"`),
+		StoredAt:           time.Now().Unix(),
+		PreviousResponseID: a.ID,
+		Output: []ResponseOutputItem{{
+			Type: "message", Role: "assistant",
+			Content: []ResponseContentPart{{Type: "output_text", Text: "turn B assistant"}},
+		}},
+	}
+	if err := saveResponse(a); err != nil {
+		t.Fatalf("save a: %v", err)
+	}
+	if err := saveResponse(b); err != nil {
+		t.Fatalf("save b: %v", err)
+	}
+
+	expanded := expandPreviousResponseHistory(b)
+
+	var transcript []string
+	for _, m := range expanded {
+		role := m.Role
+		text, _ := m.Content.(string)
+		transcript = append(transcript, role+":"+text)
+	}
+	got := strings.Join(transcript, "|")
+	want := "system:be terse|user:turn A user|assistant:turn A assistant|user:turn B user|assistant:turn B assistant"
+	if got != want {
+		t.Fatalf("chain order mismatch:\n got=%s\nwant=%s", got, want)
+	}
+}
+
+// New instructions sent on a continuation request must take effect, even when
+// previous_response_id is set. The bug: the old code only attached
+// req.Instructions when previous_response_id was empty, silently dropping
+// updated system prompts on follow-up turns.
+func TestResponsesContinuationKeepsNewInstructions(t *testing.T) {
+	h, cleanup := setupResponsesTestHandler(t)
+	defer cleanup()
+
+	prev := &ResponsesObject{
+		ID:          "resp_for_continuation",
+		Object:      "response",
+		Status:      "completed",
+		Model:       "claude-sonnet-4.5",
+		StoredInput: json.RawMessage(`"first user message"`),
+		StoredAt:    time.Now().Unix(),
+		Output: []ResponseOutputItem{{
+			Type: "message", Role: "assistant",
+			Content: []ResponseContentPart{{Type: "output_text", Text: "first reply"}},
+		}},
+	}
+	if err := saveResponse(prev); err != nil {
+		t.Fatalf("save prev: %v", err)
+	}
+
+	var capturedSystem string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		capturedSystem = string(body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(awsEventStreamFrame(t, "assistantResponseEvent", map[string]interface{}{
+			"content": "second reply",
+		}))
+	}))
+	defer server.Close()
+	defer swapKiroEndpointsForTest(t, server)()
+
+	body := strings.NewReader(`{
+		"model":"claude-sonnet-4.5",
+		"input":"second user turn",
+		"previous_response_id":"resp_for_continuation",
+		"instructions":"speak only French",
+		"store":false
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", body)
+	rec := httptest.NewRecorder()
+	h.handleOpenAIResponses(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(capturedSystem, "speak only French") {
+		t.Fatalf("expected new instructions to reach upstream, payload=%s", capturedSystem)
+	}
+}
+
 func setupResponsesTestHandler(t *testing.T) (*Handler, func()) {
 	t.Helper()
 	cfgFile := filepath.Join(t.TempDir(), "config.json")
