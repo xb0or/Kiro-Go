@@ -2115,6 +2115,7 @@
     const raw = $('credJson').value.trim();
     if (!raw) { toastWarning(t('credentials.jsonError')); return; }
     let items;
+    let skipped = 0;
     try {
       const json = JSON.parse(raw);
       if (json.accounts && Array.isArray(json.accounts)) {
@@ -2133,9 +2134,15 @@
         items = Array.isArray(json) ? json : [json];
       }
     } catch {
-      items = parseLineCredentials(raw);
-      if (items.length === 0) {
+      const parsed = parseLineCredentials(raw);
+      items = parsed.items;
+      skipped = parsed.skipped;
+      if (items.length === 0 && skipped === 0) {
         toastWarning(t('credentials.jsonError'));
+        return;
+      }
+      if (items.length === 0) {
+        toastWarning(t('credentials.lineParseAllSkipped', skipped));
         return;
       }
     }
@@ -2167,11 +2174,13 @@
     closeModal(); loadAccounts(); loadStats();
     let msg = t('sso.importSuccess', ok);
     if (fail > 0) msg += t('sso.importPartial', fail);
+    if (skipped > 0) msg += t('credentials.lineParseSkipped', skipped);
     toastPrimary(msg, { duration: 5200 });
     newIds.forEach(autoRefreshNewAccount);
   }
   function parseLineCredentials(text) {
     const items = [];
+    let skipped = 0;
     for (const line of text.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -2183,16 +2192,16 @@
       } else {
         parts = trimmed.split(/\s+/).map(s => s.trim());
       }
-      if (parts.length < 5) continue;
+      if (parts.length < 5) { skipped++; continue; }
       const refreshToken = parts[2];
-      if (!refreshToken) continue;
+      if (!refreshToken) { skipped++; continue; }
       items.push({
         refreshToken,
         clientId: parts[3],
         clientSecret: parts[4],
       });
     }
-    return items;
+    return { items, skipped };
   }
   async function importFromCookie() {
     const refreshToken = $('cookieRefreshToken').value.trim();
