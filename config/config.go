@@ -202,7 +202,7 @@ type AccountInfo struct {
 }
 
 // Version current version
-const Version = "1.0.8"
+const Version = "1.0.9"
 
 var (
 	cfg     *Config
@@ -453,6 +453,21 @@ func UpdateSettings(apiKey string, requireApiKey bool, password string) error {
 	defer cfgLock.Unlock()
 	cfg.ApiKey = apiKey
 	cfg.RequireApiKey = requireApiKey
+	if password != "" {
+		cfg.Password = password
+	}
+	return Save()
+}
+
+func UpdateSettingsPatch(apiKey *string, requireApiKey *bool, password string) error {
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	if apiKey != nil {
+		cfg.ApiKey = *apiKey
+	}
+	if requireApiKey != nil {
+		cfg.RequireApiKey = *requireApiKey
+	}
 	if password != "" {
 		cfg.Password = password
 	}
