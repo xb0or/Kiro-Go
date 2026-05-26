@@ -61,6 +61,45 @@ func TestApiKeyMigrationFromLegacyField(t *testing.T) {
 	}
 }
 
+// Public deployments (RequireApiKey=false) must not silently start enforcing
+// auth after upgrade. The migrated legacy entry is created disabled so the
+// service stays open until an operator explicitly toggles auth on.
+func TestApiKeyMigrationPublicDeploymentStaysDisabled(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	seed := map[string]interface{}{
+		"password":      "p",
+		"port":          8080,
+		"host":          "0.0.0.0",
+		"apiKey":        "legacy-secret",
+		"requireApiKey": false,
+		"accounts":      []interface{}{},
+	}
+	raw, err := json.MarshalIndent(seed, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal seed: %v", err)
+	}
+	if err := os.WriteFile(cfgFile, raw, 0600); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	if err := Init(cfgFile); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	keys := ListApiKeys()
+	if len(keys) != 1 {
+		t.Fatalf("expected one migrated key, got %d", len(keys))
+	}
+	if keys[0].Enabled {
+		t.Fatalf("expected migrated key to be disabled when legacy deployment was public")
+	}
+	if !keys[0].Migrated {
+		t.Fatalf("expected migrated flag to remain set")
+	}
+}
+
 func TestApiKeyCRUD(t *testing.T) {
 	cfgFile := filepath.Join(t.TempDir(), "config.json")
 	if err := Init(cfgFile); err != nil {

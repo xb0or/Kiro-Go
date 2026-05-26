@@ -27,11 +27,22 @@ func mustInitConfig(t *testing.T) {
 	}
 }
 
+// requireAuth flips the master gate on. Auth is now opt-in via RequireApiKey
+// so most tests need this after seeding their keys.
+func requireAuth(t *testing.T) {
+	t.Helper()
+	on := true
+	if err := config.UpdateSettingsPatch(nil, &on, ""); err != nil {
+		t.Fatalf("set requireApiKey=true: %v", err)
+	}
+}
+
 func TestAuthenticateRejectsMissingKey(t *testing.T) {
 	mustInitConfig(t)
 	if _, err := config.AddApiKey(config.ApiKeyEntry{Name: "main", Key: "sk-good", Enabled: true}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	requireAuth(t)
 
 	h := &Handler{}
 	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("{}"))
@@ -55,6 +66,7 @@ func TestAuthenticateRejectsDisabledKey(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	_ = created
+	requireAuth(t)
 
 	h := &Handler{}
 	r := newAuthTestRequest(t, "Authorization", "Bearer sk-off")
@@ -77,6 +89,7 @@ func TestAuthenticateAcceptsEnabledKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	requireAuth(t)
 
 	h := &Handler{}
 	// Bearer header form
@@ -111,6 +124,7 @@ func TestAuthenticateRejectsOverTokenLimit(t *testing.T) {
 	if err := config.RecordApiKeyUsage(created.ID, 100, 0); err != nil {
 		t.Fatalf("record usage: %v", err)
 	}
+	requireAuth(t)
 
 	h := &Handler{}
 	r := newAuthTestRequest(t, "Authorization", "Bearer sk-tlimit")
@@ -141,6 +155,7 @@ func TestAuthenticateRejectsOverCreditLimit(t *testing.T) {
 	if err := config.RecordApiKeyUsage(created.ID, 0, 1.0); err != nil {
 		t.Fatalf("record usage: %v", err)
 	}
+	requireAuth(t)
 
 	h := &Handler{}
 	r := newAuthTestRequest(t, "Authorization", "Bearer sk-climit")
@@ -206,6 +221,7 @@ func TestRouteWritesUnauthorizedClaude(t *testing.T) {
 	if _, err := config.AddApiKey(config.ApiKeyEntry{Name: "main", Key: "sk-claude", Enabled: true}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	requireAuth(t)
 
 	h := &Handler{}
 	rec := httptest.NewRecorder()
@@ -230,6 +246,7 @@ func TestRouteWritesTooManyRequestsOpenAI(t *testing.T) {
 	if err := config.RecordApiKeyUsage(created.ID, 50, 0); err != nil {
 		t.Fatalf("record: %v", err)
 	}
+	requireAuth(t)
 
 	h := &Handler{}
 	rec := httptest.NewRecorder()
@@ -288,5 +305,44 @@ func TestRecordSuccessForApiKeyEmptyIDIsNoop(t *testing.T) {
 	}
 	if got.TokensUsed != 0 || got.CreditsUsed != 0 || got.RequestsCount != 0 {
 		t.Fatalf("expected entry untouched when apiKeyID is empty, got %+v", got)
+	}
+}
+
+// Public deployments (RequireApiKey=false) must keep accepting all requests
+// even after keys exist in the config — e.g. an operator drafted some keys
+// but hasn't flipped the gate yet, or the legacy migration left a disabled
+// entry behind.
+func TestAuthenticateMasterSwitchOffPassesThrough(t *testing.T) {
+	mustInitConfig(t)
+	if _, err := config.AddApiKey(config.ApiKeyEntry{Name: "drafted", Key: "sk-drafted", Enabled: true}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// RequireApiKey defaults to false — do not flip it on.
+
+	h := &Handler{}
+	if entry, err := h.authenticate(newAuthTestRequest(t, "", "")); err != nil || entry != nil {
+		t.Fatalf("expected open access without entry, got entry=%v err=%v", entry, err)
+	}
+	if entry, err := h.authenticate(newAuthTestRequest(t, "Authorization", "Bearer sk-anything")); err != nil || entry != nil {
+		t.Fatalf("expected provided key to be ignored when gate is off, got entry=%v err=%v", entry, err)
+	}
+}
+
+// When auth is required but no keys are configured, every request must be
+// rejected. Previously the legacy fallback returned (nil,nil) and silently
+// let traffic through, so the admin UI's "require API key" toggle could be
+// flipped on without actually enforcing anything.
+func TestAuthenticateRequiredWithoutKeysFailsClosed(t *testing.T) {
+	mustInitConfig(t)
+	requireAuth(t)
+
+	h := &Handler{}
+	_, err := h.authenticate(newAuthTestRequest(t, "", ""))
+	ae, ok := err.(*authError)
+	if !ok || ae.status != http.StatusUnauthorized {
+		t.Fatalf("expected 401 authError when no keys configured, got %T %v", err, err)
+	}
+	if _, err := h.authenticate(newAuthTestRequest(t, "Authorization", "Bearer anything")); err == nil {
+		t.Fatalf("expected provided-key path to also fail closed when nothing is configured")
 	}
 }

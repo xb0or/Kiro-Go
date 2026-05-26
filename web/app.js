@@ -1401,6 +1401,12 @@
   async function saveRequireApiKey() {
     try {
       const requireApiKey = $('requireApiKey').checked;
+      if (requireApiKey && (!apiKeysCache || apiKeysCache.length === 0)) {
+        if (!confirm(t('apiKeys.requireWithoutKeysWarning'))) {
+          $('requireApiKey').checked = false;
+          return;
+        }
+      }
       const res = await api('/settings', { method: 'POST', body: JSON.stringify({ requireApiKey }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok || d.success === false) throw new Error(d.error || t('common.saveFailed'));
