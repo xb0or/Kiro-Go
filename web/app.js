@@ -1401,10 +1401,13 @@
   async function saveRequireApiKey() {
     try {
       const requireApiKey = $('requireApiKey').checked;
-      if (requireApiKey && (!apiKeysCache || apiKeysCache.length === 0)) {
-        if (!confirm(t('apiKeys.requireWithoutKeysWarning'))) {
-          $('requireApiKey').checked = false;
-          return;
+      if (requireApiKey) {
+        const hasEnabledKey = Array.isArray(apiKeysCache) && apiKeysCache.some(k => k && k.enabled);
+        if (!hasEnabledKey) {
+          if (!confirm(t('apiKeys.requireWithoutEnabledKeyWarning'))) {
+            $('requireApiKey').checked = false;
+            return;
+          }
         }
       }
       const res = await api('/settings', { method: 'POST', body: JSON.stringify({ requireApiKey }) });
