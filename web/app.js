@@ -1173,7 +1173,7 @@
       : t('detail.overageUnknown');
     const disabledAttr = capable ? '' : ' disabled';
     return '<div class="form-group flex items-center gap-2">' +
-      '<span class="switch"><input type="checkbox" id="overageSwitchInput-' + idAttr + '" ' + (checked ? 'checked' : '') + disabledAttr + ' data-detail-action="toggleOverage" data-id="' + idAttr + '" /><span class="slider"></span></span>' +
+      '<label class="switch"><input type="checkbox" id="overageSwitchInput-' + idAttr + '" ' + (checked ? 'checked' : '') + disabledAttr + ' data-detail-action="toggleOverage" data-id="' + idAttr + '" /><span class="slider"></span></label>' +
       '<span id="overageSwitchLabel-' + idAttr + '">' + escapeHtml(statusText) + '</span>' +
       '</div>' +
       (capable ? '' : '<p class="message message-error">' + escapeHtml(t('detail.overageNotCapable')) + '</p>') +
