@@ -391,7 +391,7 @@
   "apiKeys.listTitle": "API Keys",
   "apiKeys.listHint": "Create multiple keys; each tracks usage and limits independently.",
   "apiKeys.requireHint": "When enabled, all /v1/* requests must include Authorization: Bearer <key> or X-Api-Key.",
-  "apiKeys.requireWithoutKeysWarning": "No API keys are configured yet. Enabling authentication now will reject every /v1/* request. Continue anyway?",
+  "apiKeys.requireWithoutEnabledKeyWarning": "No enabled API key found (legacy keys migrated from older configs are kept disabled). Enabling authentication now will reject every /v1/* request. Enable or create a key first — continue anyway?",
   "apiKeys.add": "Add Key",
   "apiKeys.empty": "No API keys yet. Click the button on the right to add one.",
   "apiKeys.unnamed": "(unnamed)",
