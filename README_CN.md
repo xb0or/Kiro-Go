@@ -53,7 +53,7 @@ go build -o kiro-go .
 
 ### 部署到 Zeabur
 
-本 fork 已经提供了适配 Zeabur 的 `Dockerfile`（`golang:1.23` 构建 + `debian:bookworm-slim` 运行），可以直接部署，无需额外配置。
+本 fork 已经提供了适配 Zeabur 的 `Dockerfile`（多架构 `golang:1.23-alpine` 构建 + `alpine:latest` 运行），可以直接部署，无需额外配置。
 
 两种部署方式：
 

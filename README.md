@@ -53,7 +53,7 @@ go build -o kiro-go .
 
 ### Deploy on Zeabur
 
-This fork ships a Zeabur-friendly `Dockerfile` (single-stage-ish, `golang:1.23` build + `debian:bookworm-slim` runtime) so the repo can be deployed directly without extra config.
+This fork ships a Zeabur-friendly `Dockerfile` (multi-arch `golang:1.23-alpine` builder + `alpine:latest` runtime) so the repo can be deployed directly without extra config.
 
 Two ways to deploy:
 
@@ -74,7 +74,7 @@ Two ways to deploy:
 
 After the service is running, open `https://<your-domain>/admin` to log in.
 
-Config is auto-created at `data/config.json`. Mount `/app/data` for persistence. The default admin password is `changeme` — override it via the `ADMIN_PASSWORD` env var or change it in the admin panel before going to production. Mount `/app/data` for persistence. The default admin password is `changeme` — override it via the `ADMIN_PASSWORD` env var or change it in the admin panel before going to production.
+Config is auto-created at `data/config.json`. Mount `/app/data` for persistence. The default admin password is `changeme` — override it via the `ADMIN_PASSWORD` env var or change it in the admin panel before going to production.
 
 ## Usage
 
