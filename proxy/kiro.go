@@ -22,10 +22,11 @@ import (
 
 // Endpoint configuration (auto-fallback on quota exhaustion).
 type kiroEndpoint struct {
-	URL       string
-	Origin    string
-	AmzTarget string
-	Name      string
+	URL                string
+	Origin             string
+	AmzTarget          string
+	Name               string
+	RequiresProfileArn bool
 }
 
 var kiroEndpoints = []kiroEndpoint{
@@ -33,19 +34,21 @@ var kiroEndpoints = []kiroEndpoint{
 		URL:       "https://q.us-east-1.amazonaws.com/generateAssistantResponse",
 		Origin:    "AI_EDITOR",
 		AmzTarget: "",
-		Name:      "Kiro IDE",
+		Name:      "Kiro/Q",
 	},
 	{
-		URL:       "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
-		Origin:    "AI_EDITOR",
-		AmzTarget: "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
-		Name:      "CodeWhisperer",
+		URL:                "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
+		Origin:             "AI_EDITOR",
+		AmzTarget:          "AmazonCodeWhispererStreamingService.GenerateAssistantResponse",
+		Name:               "CodeWhisperer",
+		RequiresProfileArn: true,
 	},
 	{
-		URL:       "https://q.us-east-1.amazonaws.com/generateAssistantResponse",
-		Origin:    "AI_EDITOR",
-		AmzTarget: "AmazonQDeveloperStreamingService.SendMessage",
-		Name:      "AmazonQ",
+		URL:                "https://q.us-east-1.amazonaws.com/generateAssistantResponse",
+		Origin:             "AI_EDITOR",
+		AmzTarget:          "AmazonQDeveloperStreamingService.SendMessage",
+		Name:               "AmazonQ",
+		RequiresProfileArn: true,
 	},
 }
 
@@ -262,6 +265,49 @@ func setPayloadProfileArnForAccount(payload *KiroPayload, account *config.Accoun
 	}
 }
 
+func currentPayloadOrigin(payload *KiroPayload) string {
+	if payload == nil {
+		return ""
+	}
+	return payload.ConversationState.CurrentMessage.UserInputMessage.Origin
+}
+
+func currentPayloadHasEnvState(payload *KiroPayload) bool {
+	if payload == nil {
+		return false
+	}
+	ctx := payload.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext
+	return ctx != nil && ctx.EnvState != nil
+}
+
+func kiroEndpointLogContext(ep kiroEndpoint, account *config.Account, payload *KiroPayload, headers kiroHeaderValues) string {
+	mode := config.EffectiveClientMode(account)
+	email := "<nil>"
+	if account != nil && account.Email != "" {
+		email = account.Email
+	}
+	target := ep.AmzTarget
+	if target == "" {
+		target = "-"
+	}
+	userAgent := headers.UserAgent
+	if userAgent == "" {
+		userAgent = "-"
+	}
+	return fmt.Sprintf(
+		"endpoint=%s url=%s target=%s account=%s clientMode=%s origin=%s envState=%t profileArn=%t userAgent=%q",
+		ep.Name,
+		ep.URL,
+		target,
+		email,
+		mode.Normalize(),
+		currentPayloadOrigin(payload),
+		currentPayloadHasEnvState(payload),
+		payload != nil && strings.TrimSpace(payload.ProfileArn) != "",
+		userAgent,
+	)
+}
+
 // getSortedEndpoints returns endpoints ordered by user preference, with optional fallback.
 func getSortedEndpoints(preferred string) []kiroEndpoint {
 	fallback := config.GetEndpointFallback()
@@ -348,6 +394,13 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		// Update user-message origin/envState for the selected account/client mode.
 		applyClientModeToPayloadForMode(payload, config.EffectiveClientMode(account))
 
+		if ep.RequiresProfileArn && (payload == nil || strings.TrimSpace(payload.ProfileArn) == "") {
+			lastErr = fmt.Errorf("profileArn is required for %s", ep.Name)
+			logger.Warnf("[KiroAPI] Skip endpoint without profileArn: endpoint=%s url=%s clientMode=%s origin=%s",
+				ep.Name, ep.URL, config.EffectiveClientMode(account).Normalize(), currentPayloadOrigin(payload))
+			continue
+		}
+
 		reqBody, _ := json.Marshal(payload)
 		req, err := http.NewRequest("POST", ep.URL, bytes.NewReader(reqBody))
 		if err != nil {
@@ -360,6 +413,8 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 			host = parsedURL.Host
 		}
 		headerValues := buildStreamingHeaderValues(account, host)
+		logContext := kiroEndpointLogContext(ep, account, payload, headerValues)
+		logger.Debugf("[KiroAPI] Sending request: %s", logContext)
 
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "*/*")
@@ -374,13 +429,13 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		resp, err := GetClientForProxy(ResolveAccountProxyURL(account)).Do(req)
 		if err != nil {
 			lastErr = err
-			logger.Warnf("[KiroAPI] Endpoint %s failed: %v", ep.Name, err)
+			logger.Warnf("[KiroAPI] Request failed: %s error=%v", logContext, err)
 			continue
 		}
 
 		if resp.StatusCode == 429 {
 			resp.Body.Close()
-			logger.Warnf("[KiroAPI] Endpoint %s quota exhausted (429), trying next...", ep.Name)
+			logger.Warnf("[KiroAPI] Quota exhausted, trying next endpoint: %s status=429", logContext)
 			lastErr = fmt.Errorf("quota exhausted on %s", ep.Name)
 			continue
 		}
@@ -393,10 +448,11 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 				return lastErr
 			}
-			logger.Warnf("[KiroAPI] Endpoint %s error: %v", ep.Name, lastErr)
+			logger.Warnf("[KiroAPI] Endpoint error: %s status=%d body=%s", logContext, resp.StatusCode, string(errBody))
 			continue
 		}
 
+		logger.Debugf("[KiroAPI] Endpoint accepted: %s status=200", logContext)
 		err = parseEventStream(resp.Body, callback)
 		resp.Body.Close()
 		return err

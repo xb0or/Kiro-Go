@@ -51,7 +51,10 @@ func GetUsageLimits(account *config.Account) (*UsageLimitsResponse, error) {
 func GetUserInfo(account *config.Account) (*UserInfoResponse, error) {
 	url := fmt.Sprintf("%s/GetUserInfo", kiroRestAPIBase)
 
-	payload := `{"origin":"KIRO_IDE"}`
+	payloadBytes, _ := json.Marshal(map[string]string{
+		"origin": config.GetOrigin(account),
+	})
+	payload := string(payloadBytes)
 	req, err := http.NewRequest("POST", url, strings.NewReader(payload))
 	if err != nil {
 		return nil, err
