@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,6 +31,39 @@ func GenerateMachineId() string {
 	bytes[8] = (bytes[8] & 0x3f) | 0x80 // 变体
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16])
+}
+
+// ClientMode controls which official client request fingerprint is simulated.
+type ClientMode string
+
+const (
+	// ClientModeKiroIDE preserves the original Kiro IDE compatible behavior.
+	ClientModeKiroIDE ClientMode = "kiro-ide"
+	// ClientModeKiroCLI simulates the official kiro-cli request fingerprint.
+	ClientModeKiroCLI ClientMode = "kiro-cli"
+)
+
+// Normalize returns a supported mode, defaulting to Kiro IDE.
+func (m ClientMode) Normalize() ClientMode {
+	switch ClientMode(strings.ToLower(strings.TrimSpace(string(m)))) {
+	case ClientModeKiroCLI:
+		return ClientModeKiroCLI
+	default:
+		return ClientModeKiroIDE
+	}
+}
+
+// IsCLI reports whether the mode is kiro-cli.
+func (m ClientMode) IsCLI() bool {
+	return m.Normalize() == ClientModeKiroCLI
+}
+
+// Origin returns the origin value expected by upstream APIs for the mode.
+func (m ClientMode) Origin() string {
+	if m.IsCLI() {
+		return "KIRO_CLI"
+	}
+	return "AI_EDITOR"
 }
 
 // Account represents a Kiro API account with authentication credentials and usage statistics.
@@ -55,6 +89,9 @@ type Account struct {
 
 	// Per-account outbound proxy (falls back to global ProxyURL if empty)
 	ProxyURL string `json:"proxyURL,omitempty"`
+
+	// Per-account client simulation mode. Empty falls back to global ClientMode.
+	ClientMode ClientMode `json:"clientMode,omitempty"`
 
 	// Priority weight for load balancing (higher = more requests)
 	Weight int `json:"weight,omitempty"` // 0 or 1 = normal, 2+ = higher priority
@@ -139,16 +176,18 @@ type ApiKeyEntry struct {
 // Config represents the global application configuration.
 type Config struct {
 	// Server settings
-	Password      string        `json:"password"`         // Admin panel password
-	Port          int           `json:"port"`             // HTTP server port (default: 8080)
-	Host          string        `json:"host"`             // HTTP server bind address (default: 0.0.0.0)
-	ApiKey        string        `json:"apiKey,omitempty"` // [Deprecated] Legacy single API key, migrated into ApiKeys on first load
-	RequireApiKey bool          `json:"requireApiKey"`    // [Deprecated] Whether to enforce API key validation; with multi-key support, len(ApiKeys)>0 implicitly enforces auth
-	ApiKeys       []ApiKeyEntry `json:"apiKeys,omitempty"` // Multiple API keys, each with independent quota
-	KiroVersion   string        `json:"kiroVersion,omitempty"`
-	SystemVersion string        `json:"systemVersion,omitempty"`
-	NodeVersion   string        `json:"nodeVersion,omitempty"`
-	Accounts      []Account     `json:"accounts"` // Registered Kiro accounts
+	Password       string        `json:"password"`          // Admin panel password
+	Port           int           `json:"port"`              // HTTP server port (default: 8080)
+	Host           string        `json:"host"`              // HTTP server bind address (default: 0.0.0.0)
+	ApiKey         string        `json:"apiKey,omitempty"`  // [Deprecated] Legacy single API key, migrated into ApiKeys on first load
+	RequireApiKey  bool          `json:"requireApiKey"`     // [Deprecated] Whether to enforce API key validation; with multi-key support, len(ApiKeys)>0 implicitly enforces auth
+	ApiKeys        []ApiKeyEntry `json:"apiKeys,omitempty"` // Multiple API keys, each with independent quota
+	KiroVersion    string        `json:"kiroVersion,omitempty"`
+	SystemVersion  string        `json:"systemVersion,omitempty"`
+	NodeVersion    string        `json:"nodeVersion,omitempty"`
+	ClientMode     ClientMode    `json:"clientMode,omitempty"`     // Global client simulation mode: kiro-ide or kiro-cli
+	KiroCliVersion string        `json:"kiroCliVersion,omitempty"` // kiro-cli app version used in UA when clientMode=kiro-cli
+	Accounts       []Account     `json:"accounts"`                 // Registered Kiro accounts
 
 	// Thinking mode configuration for extended reasoning output
 	ThinkingSuffix       string `json:"thinkingSuffix,omitempty"`       // Model suffix to trigger thinking mode (default: "-thinking")
@@ -240,6 +279,47 @@ func Init(path string) error {
 	return Load()
 }
 
+func defaultKiroCliVersion() string {
+	return "1.29.3"
+}
+
+func effectiveGlobalClientModeLocked() ClientMode {
+	if cfg == nil {
+		return ClientModeKiroIDE
+	}
+	return cfg.ClientMode.Normalize()
+}
+
+// EffectiveClientMode returns the account-level client mode with global fallback.
+func EffectiveClientMode(account *Account) ClientMode {
+	cfgLock.RLock()
+	defer cfgLock.RUnlock()
+	if account != nil && account.ClientMode != "" {
+		return account.ClientMode.Normalize()
+	}
+	return effectiveGlobalClientModeLocked()
+}
+
+// GetClientMode returns the global client simulation mode.
+func GetClientMode() ClientMode {
+	cfgLock.RLock()
+	defer cfgLock.RUnlock()
+	return effectiveGlobalClientModeLocked()
+}
+
+// UpdateClientMode updates the global client simulation mode and persists it.
+func UpdateClientMode(mode ClientMode) error {
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	cfg.ClientMode = mode.Normalize()
+	return Save()
+}
+
+// GetOrigin returns the effective origin value for the account/client mode.
+func GetOrigin(account *Account) string {
+	return EffectiveClientMode(account).Origin()
+}
+
 func Load() error {
 	cfgLock.Lock()
 	defer cfgLock.Unlock()
@@ -250,11 +330,13 @@ func Load() error {
 			// Create default configuration.
 			// Binds to 0.0.0.0 by default for Docker/container compatibility.
 			cfg = &Config{
-				Password:      "changeme",
-				Port:          8080,
-				Host:          "0.0.0.0",
-				RequireApiKey: false,
-				Accounts:      []Account{},
+				Password:       "changeme",
+				Port:           8080,
+				Host:           "0.0.0.0",
+				RequireApiKey:  false,
+				ClientMode:     ClientModeKiroIDE,
+				KiroCliVersion: defaultKiroCliVersion(),
+				Accounts:       []Account{},
 			}
 			return saveLocked()
 		}
@@ -264,6 +346,16 @@ func Load() error {
 	var c Config
 	if err := json.Unmarshal(data, &c); err != nil {
 		return err
+	}
+	c.ClientMode = c.ClientMode.Normalize()
+	if c.KiroCliVersion == "" {
+		c.KiroCliVersion = defaultKiroCliVersion()
+	}
+	for i := range c.Accounts {
+		c.Accounts[i].ClientMode = c.Accounts[i].ClientMode.Normalize()
+		if c.Accounts[i].ClientMode == ClientModeKiroIDE {
+			c.Accounts[i].ClientMode = ""
+		}
 	}
 	cfg = &c
 
@@ -826,9 +918,11 @@ func UpdateLogLevel(level string) error {
 }
 
 type KiroClientConfig struct {
-	KiroVersion   string
-	SystemVersion string
-	NodeVersion   string
+	KiroVersion    string
+	SystemVersion  string
+	NodeVersion    string
+	ClientMode     ClientMode
+	KiroCliVersion string
 }
 
 func GetKiroClientConfig() KiroClientConfig {
@@ -853,11 +947,92 @@ func GetKiroClientConfig() KiroClientConfig {
 		nodeVersion = cfg.NodeVersion
 	}
 
-	return KiroClientConfig{
-		KiroVersion:   kiroVersion,
-		SystemVersion: systemVersion,
-		NodeVersion:   nodeVersion,
+	kiroCliVersion := defaultKiroCliVersion()
+	if cfg != nil && cfg.KiroCliVersion != "" {
+		kiroCliVersion = cfg.KiroCliVersion
 	}
+
+	return KiroClientConfig{
+		KiroVersion:    kiroVersion,
+		SystemVersion:  systemVersion,
+		NodeVersion:    nodeVersion,
+		ClientMode:     effectiveGlobalClientModeLocked(),
+		KiroCliVersion: kiroCliVersion,
+	}
+}
+
+// StreamingUserAgent returns the upstream User-Agent for streaming API calls.
+func (c KiroClientConfig) StreamingUserAgent(machineID string, mode ClientMode) string {
+	if mode.IsCLI() {
+		return fmt.Sprintf("aws-sdk-rust/1.3.14 ua/2.1 api/codewhispererstreaming/0.1.14474 os/linux lang/rust/1.92.0 md/appVersion-%s app/AmazonQ-For-CLI", c.KiroCliVersion)
+	}
+	ua := fmt.Sprintf(
+		"aws-sdk-js/%s ua/2.1 os/%s lang/js md/nodejs#%s api/codewhispererstreaming#%s m/E KiroIDE-%s",
+		"1.0.34",
+		c.SystemVersion,
+		c.NodeVersion,
+		"1.0.34",
+		c.KiroVersion,
+	)
+	if machineID != "" {
+		ua += "-" + machineID
+	}
+	return ua
+}
+
+// StreamingAmzUserAgent returns x-amz-user-agent for streaming API calls.
+func (c KiroClientConfig) StreamingAmzUserAgent(machineID string, mode ClientMode) string {
+	if mode.IsCLI() {
+		return "aws-sdk-rust/1.3.14 ua/2.1 api/codewhispererstreaming/0.1.14474 os/linux lang/rust/1.92.0 m/F app/AmazonQ-For-CLI"
+	}
+	ua := fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s", "1.0.34", c.KiroVersion)
+	if machineID != "" {
+		ua += "-" + machineID
+	}
+	return ua
+}
+
+// RuntimeUserAgent returns the upstream User-Agent for runtime API calls.
+func (c KiroClientConfig) RuntimeUserAgent(machineID string, mode ClientMode) string {
+	if mode.IsCLI() {
+		return fmt.Sprintf("aws-sdk-rust/1.3.14 ua/2.1 api/codewhispererruntime/0.1.14474 os/linux lang/rust/1.92.0 md/appVersion-%s app/AmazonQ-For-CLI", c.KiroCliVersion)
+	}
+	ua := fmt.Sprintf(
+		"aws-sdk-js/%s ua/2.1 os/%s lang/js md/nodejs#%s api/codewhispererruntime#%s m/N,E KiroIDE-%s",
+		"1.0.0",
+		c.SystemVersion,
+		c.NodeVersion,
+		"1.0.0",
+		c.KiroVersion,
+	)
+	if machineID != "" {
+		ua += "-" + machineID
+	}
+	return ua
+}
+
+// RuntimeAmzUserAgent returns x-amz-user-agent for runtime API calls.
+func (c KiroClientConfig) RuntimeAmzUserAgent(machineID string, mode ClientMode) string {
+	if mode.IsCLI() {
+		return "aws-sdk-rust/1.3.14 ua/2.1 api/codewhispererruntime/0.1.14474 os/linux lang/rust/1.92.0 m/F app/AmazonQ-For-CLI"
+	}
+	ua := fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s", "1.0.0", c.KiroVersion)
+	if machineID != "" {
+		ua += "-" + machineID
+	}
+	return ua
+}
+
+// RefreshUserAgent returns the token-refresh User-Agent for a mode.
+func (c KiroClientConfig) RefreshUserAgent(machineID string, mode ClientMode) string {
+	if mode.IsCLI() {
+		return "Kiro-CLI"
+	}
+	ua := fmt.Sprintf("KiroIDE-%s", c.KiroVersion)
+	if machineID != "" {
+		ua += "-" + machineID
+	}
+	return ua
 }
 
 func defaultSystemVersion() string {

@@ -18,6 +18,7 @@
 - 多种认证方式：AWS Builder ID、IAM Identity Center (企业 SSO)、SSO Token、本地缓存、凭证 JSON
 - 用量追踪、账号导入导出、中英双语
 - 支持设置出站代理（SOCKS5 / HTTP）
+- 支持 Kiro IDE / Kiro CLI 两种客户端模拟模式
 
 ## 快速开始
 
@@ -94,6 +95,24 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"你好！"}]}'
 ```
 
+## Kiro CLI 模式
+
+本项目支持全局或账号级 `clientMode`：
+
+- `kiro-ide`：默认模式，保持原有 Kiro IDE 请求特征。
+- `kiro-cli`：模拟官方 kiro-cli 的 `origin=KIRO_CLI`、`envState`、User-Agent、`x-amzn-codewhisperer-optout=false` 与精简 Token 刷新 Header。
+
+可在管理面板「设置 - 客户端模拟模式」修改全局模式，也可在账号详情中为单个账号覆盖。配置文件示例：
+
+```json
+{
+  "clientMode": "kiro-cli",
+  "accounts": [
+    { "refreshToken": "...", "clientMode": "kiro-cli" }
+  ]
+}
+```
+
 ## 思考模式
 
 在模型名后加后缀（默认 `-thinking`）即可启用，例如 `claude-sonnet-4.5-thinking`。Claude 兼容请求如果带有顶层 `thinking` 配置，例如 `{"type":"enabled","budget_tokens":2048}` 或 `{"type":"adaptive"}`，也会自动启用 thinking 模式。输出格式可在管理面板「设置 - Thinking 模式」中配置。
@@ -110,6 +129,7 @@ curl http://localhost:8080/v1/chat/completions \
 |-----|------|-------|
 | `CONFIG_PATH` | 配置文件路径 | `data/config.json` |
 | `ADMIN_PASSWORD` | 管理面板密码（覆盖配置文件） | - |
+| `LOG_LEVEL` | 日志级别：debug/info/warn/error | `info` |
 
 ## 参与贡献
 

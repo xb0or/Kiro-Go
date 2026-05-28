@@ -21,7 +21,7 @@ func RefreshToken(account *config.Account) (string, string, int64, string, error
 	client := GetAuthClientForProxy(proxyURL)
 
 	if account.AuthMethod == "social" {
-		return refreshSocialToken(account.RefreshToken, client)
+		return refreshSocialToken(account, client)
 	}
 	return refreshOIDCToken(account.RefreshToken, account.ClientID, account.ClientSecret, account.Region, client)
 }
@@ -75,16 +75,27 @@ func refreshOIDCToken(refreshToken, clientID, clientSecret, region string, clien
 }
 
 // refreshSocialToken Social (GitHub/Google) token 刷新
-func refreshSocialToken(refreshToken string, client *http.Client) (string, string, int64, string, error) {
+func refreshSocialToken(account *config.Account, client *http.Client) (string, string, int64, string, error) {
 	url := "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
 
 	payload := map[string]string{
-		"refreshToken": refreshToken,
+		"refreshToken": account.RefreshToken,
 	}
 
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	mode := config.EffectiveClientMode(account)
+	clientCfg := config.GetKiroClientConfig()
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", clientCfg.RefreshUserAgent(account.MachineId, mode))
+	if mode.IsCLI() {
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("Accept-Encoding", "gzip")
+	} else {
+		req.Header.Set("Accept", "application/json, text/plain, */*")
+		req.Header.Set("Accept-Encoding", "gzip, compress, deflate, br")
+		req.Header.Set("Connection", "close")
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {

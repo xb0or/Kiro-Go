@@ -201,7 +201,7 @@ func appendToolDescriptionSuffix(name, desc string) string {
 
 func ClaudeToKiro(req *ClaudeRequest, thinking bool) *KiroPayload {
 	modelID := MapModel(req.Model)
-	origin := "AI_EDITOR"
+	origin := string(config.GetClientMode().Origin())
 
 	// 提取系统提示
 	systemPrompt := buildClaudeSystemPrompt(req.System, thinking)
@@ -312,6 +312,7 @@ func ClaudeToKiro(req *ClaudeRequest, thinking bool) *KiroPayload {
 	if len(history) > 0 {
 		payload.ConversationState.History = history
 	}
+	applyClientModeToPayload(payload)
 
 	if req.MaxTokens > 0 || req.Temperature > 0 || req.TopP > 0 {
 		payload.InferenceConfig = &InferenceConfig{
@@ -322,6 +323,55 @@ func ClaudeToKiro(req *ClaudeRequest, thinking bool) *KiroPayload {
 	}
 
 	return payload
+}
+
+func defaultKiroCLIEnvState() *KiroEnvState {
+	return &KiroEnvState{
+		OperatingSystem:         "linux",
+		CurrentWorkingDirectory: "/home/user",
+	}
+}
+
+func ensureUserInputContext(msg *KiroUserInputMessage) *UserInputMessageContext {
+	if msg.UserInputMessageContext == nil {
+		msg.UserInputMessageContext = &UserInputMessageContext{}
+	}
+	return msg.UserInputMessageContext
+}
+
+func isEmptyUserInputContext(ctx *UserInputMessageContext) bool {
+	return ctx == nil || (ctx.EnvState == nil && len(ctx.Tools) == 0 && len(ctx.ToolResults) == 0)
+}
+
+func applyClientModeToUserInput(msg *KiroUserInputMessage, mode config.ClientMode) {
+	if msg == nil {
+		return
+	}
+	msg.Origin = mode.Origin()
+	if mode.IsCLI() {
+		ensureUserInputContext(msg).EnvState = defaultKiroCLIEnvState()
+		return
+	}
+	if msg.UserInputMessageContext != nil {
+		msg.UserInputMessageContext.EnvState = nil
+		if isEmptyUserInputContext(msg.UserInputMessageContext) {
+			msg.UserInputMessageContext = nil
+		}
+	}
+}
+
+func applyClientModeToPayload(payload *KiroPayload) {
+	applyClientModeToPayloadForMode(payload, config.GetClientMode())
+}
+
+func applyClientModeToPayloadForMode(payload *KiroPayload, mode config.ClientMode) {
+	if payload == nil {
+		return
+	}
+	applyClientModeToUserInput(&payload.ConversationState.CurrentMessage.UserInputMessage, mode)
+	for i := range payload.ConversationState.History {
+		applyClientModeToUserInput(payload.ConversationState.History[i].UserInputMessage, mode)
+	}
 }
 
 func buildClaudeSystemPrompt(system interface{}, thinking bool) string {
@@ -995,7 +1045,7 @@ type OpenAIUsage struct {
 
 func OpenAIToKiro(req *OpenAIRequest, thinking bool) *KiroPayload {
 	modelID := MapModel(req.Model)
-	origin := "AI_EDITOR"
+	origin := string(config.GetClientMode().Origin())
 
 	// 提取系统提示
 	var systemPrompt string
@@ -1151,6 +1201,7 @@ func OpenAIToKiro(req *OpenAIRequest, thinking bool) *KiroPayload {
 	if len(history) > 0 {
 		payload.ConversationState.History = history
 	}
+	applyClientModeToPayload(payload)
 
 	if req.MaxTokens > 0 || req.Temperature > 0 || req.TopP > 0 {
 		payload.InferenceConfig = &InferenceConfig{

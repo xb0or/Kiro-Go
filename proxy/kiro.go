@@ -173,8 +173,15 @@ type KiroUserInputMessage struct {
 }
 
 type UserInputMessageContext struct {
+	EnvState    *KiroEnvState     `json:"envState,omitempty"`
 	Tools       []KiroToolWrapper `json:"tools,omitempty"`
 	ToolResults []KiroToolResult  `json:"toolResults,omitempty"`
+}
+
+// KiroEnvState mirrors the environment metadata sent by kiro-cli.
+type KiroEnvState struct {
+	OperatingSystem         string `json:"operatingSystem"`
+	CurrentWorkingDirectory string `json:"currentWorkingDirectory"`
 }
 
 type KiroToolWrapper struct {
@@ -338,8 +345,8 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 
 	var lastErr error
 	for _, ep := range endpoints {
-		// Update the origin field for the selected endpoint.
-		payload.ConversationState.CurrentMessage.UserInputMessage.Origin = ep.Origin
+		// Update user-message origin/envState for the selected account/client mode.
+		applyClientModeToPayloadForMode(payload, config.EffectiveClientMode(account))
 
 		reqBody, _ := json.Marshal(payload)
 		req, err := http.NewRequest("POST", ep.URL, bytes.NewReader(reqBody))
@@ -361,7 +368,6 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		}
 		applyKiroBaseHeaders(req, account, headerValues)
 		req.Header.Set("x-amzn-kiro-agent-mode", "vibe")
-		req.Header.Set("x-amzn-codewhisperer-optout", "true")
 		req.Header.Set("Amz-Sdk-Request", "attempt=1; max=3")
 		req.Header.Set("Amz-Sdk-Invocation-Id", uuid.New().String())
 

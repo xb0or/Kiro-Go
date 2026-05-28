@@ -1034,7 +1034,17 @@
       detailItem(t('detail.userId'), a.userId || '-') +
       detailItem(t('detail.authMethod'), formatAuthMethod(a.provider || a.authMethod)) +
       detailItem(t('detail.region'), a.region || 'us-east-1') +
+      detailItem(t('detail.clientMode'), formatClientMode(a.effectiveClientMode || a.clientMode || 'kiro-ide')) +
       '</div></div>' +
+
+      '<div class="detail-section"><h4>' + escapeHtml(t('detail.clientMode')) + '</h4><div class="machine-id-row">' +
+      '<select id="accountClientModeInput">' +
+      '<option value="">' + escapeHtml(t('detail.clientModeDefault')) + '</option>' +
+      '<option value="kiro-ide">' + escapeHtml(t('settings.clientModeKiroIde')) + '</option>' +
+      '<option value="kiro-cli">' + escapeHtml(t('settings.clientModeKiroCli')) + '</option>' +
+      '</select>' +
+      '<button class="btn btn-sm btn-primary" data-detail-action="saveClientMode" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
+      '</div><p class="help-block">' + escapeHtml(t('detail.clientModeHint')) + '</p></div>' +
 
       '<div class="detail-section"><h4>' + escapeHtml(t('detail.machineId')) + '</h4><div class="machine-id-row">' +
       '<input type="text" id="machineIdInput" value="' + escapeAttr(a.machineId || '') + '" placeholder="UUID" />' +
@@ -1088,6 +1098,7 @@
       '<div id="modelsList" class="model-list"></div>' +
       '</div>';
 
+    $('accountClientModeInput').value = a.clientMode || '';
     openDialog('detailModal');
   }
   async function loadModels(id) {
@@ -1240,6 +1251,13 @@
     }
     await putAccount(id, { proxyURL: url }, t('detail.proxySaved'));
   }
+  async function saveAccountClientMode(id) {
+    const clientMode = $('accountClientModeInput').value;
+    await putAccount(id, { clientMode }, t('settings.clientModeSaved'));
+  }
+  function formatClientMode(mode) {
+    return mode === 'kiro-cli' ? t('settings.clientModeKiroCli') : t('settings.clientModeKiroIde');
+  }
   function closeDetailModal() { closeDialog('detailModal'); }
 
   // Test flow
@@ -1383,6 +1401,7 @@
     const d = await res.json();
     $('requireApiKey').checked = d.requireApiKey;
     $('allowOverUsage').checked = d.allowOverUsage || false;
+    if ($('clientMode')) $('clientMode').value = d.clientMode || 'kiro-ide';
     await Promise.all([loadThinkingConfig(), loadEndpointConfig(), loadProxyConfig(), loadPromptFilter(), loadApiKeys()]);
     refreshCustomSelects();
   }
@@ -1490,6 +1509,13 @@
     const allowOverUsage = $('allowOverUsage').checked;
     await api('/settings', { method: 'POST', body: JSON.stringify({ allowOverUsage }) });
     toast(t('settings.overUsageSaved'), 'success');
+  }
+  async function saveClientModeConfig() {
+    const clientMode = $('clientMode').value || 'kiro-ide';
+    const res = await api('/settings', { method: 'POST', body: JSON.stringify({ clientMode }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) return toast(t('common.saveFailed') + ': ' + (d.error || ''), 'error');
+    toast(t('settings.clientModeSaved'), 'success');
   }
   async function changePassword() {
     const np = $('newPassword').value;
@@ -2163,7 +2189,8 @@
         clientId: item.clientId || '',
         clientSecret: item.clientSecret || '',
         authMethod, provider,
-        region: item.region || 'us-east-1'
+        region: item.region || 'us-east-1',
+        clientMode: item.clientMode || ''
       };
       try {
         const res = await api('/auth/credentials', { method: 'POST', body: JSON.stringify(payload) });
@@ -2626,6 +2653,7 @@
   function bindSettingsEvents() {
     $('saveRequireApiKeyBtn').addEventListener('click', saveRequireApiKey);
     $('saveOverUsageBtn').addEventListener('click', saveOverUsageConfig);
+    $('saveClientModeBtn').addEventListener('click', saveClientModeConfig);
     $('saveThinkingBtn').addEventListener('click', saveThinkingConfig);
     $('saveEndpointBtn').addEventListener('click', saveEndpointConfig);
     $('changePasswordBtn').addEventListener('click', changePassword);
@@ -2693,6 +2721,7 @@
       else if (a === 'toggleOverage') toggleOverageSwitch(id, b);
       else if (a === 'refreshOverage') refreshAccountOverage(id);
       else if (a === 'saveProxyURL') saveProxyURL(id);
+      else if (a === 'saveClientMode') saveAccountClientMode(id);
       else if (a === 'loadModels') loadModels(id);
       else if (a === 'refreshModels') refreshAccountModels(id);
     });

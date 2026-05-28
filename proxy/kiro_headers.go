@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"fmt"
 	"kiro-go/config"
 	"net/http"
 )
@@ -25,27 +24,21 @@ func buildRuntimeHeaderValues(account *config.Account, host string) kiroHeaderVa
 	return buildKiroHeaderValues(account, host, "codewhispererruntime", kiroRuntimeSDKVersion, "m/N,E")
 }
 
-func buildKiroHeaderValues(account *config.Account, host, apiName, sdkVersion, mode string) kiroHeaderValues {
+func buildKiroHeaderValues(account *config.Account, host, apiName, sdkVersion, modeMarker string) kiroHeaderValues {
 	clientCfg := config.GetKiroClientConfig()
+	clientMode := config.EffectiveClientMode(account)
 	machineID := ""
 	if account != nil {
 		machineID = account.MachineId
 	}
 
-	userAgent := fmt.Sprintf(
-		"aws-sdk-js/%s ua/2.1 os/%s lang/js md/nodejs#%s api/%s#%s %s KiroIDE-%s",
-		sdkVersion,
-		clientCfg.SystemVersion,
-		clientCfg.NodeVersion,
-		apiName,
-		sdkVersion,
-		mode,
-		clientCfg.KiroVersion,
-	)
-	amzUserAgent := fmt.Sprintf("aws-sdk-js/%s KiroIDE-%s", sdkVersion, clientCfg.KiroVersion)
-	if machineID != "" {
-		userAgent += "-" + machineID
-		amzUserAgent += "-" + machineID
+	var userAgent, amzUserAgent string
+	if apiName == "codewhispererstreaming" {
+		userAgent = clientCfg.StreamingUserAgent(machineID, clientMode)
+		amzUserAgent = clientCfg.StreamingAmzUserAgent(machineID, clientMode)
+	} else {
+		userAgent = clientCfg.RuntimeUserAgent(machineID, clientMode)
+		amzUserAgent = clientCfg.RuntimeAmzUserAgent(machineID, clientMode)
 	}
 
 	return kiroHeaderValues{
@@ -61,7 +54,11 @@ func applyKiroBaseHeaders(req *http.Request, account *config.Account, values kir
 	}
 	req.Header.Set("User-Agent", values.UserAgent)
 	req.Header.Set("x-amz-user-agent", values.AmzUserAgent)
-	req.Header.Set("x-amzn-codewhisperer-optout", "true")
+	if config.EffectiveClientMode(account).IsCLI() {
+		req.Header.Set("x-amzn-codewhisperer-optout", "false")
+	} else {
+		req.Header.Set("x-amzn-codewhisperer-optout", "true")
+	}
 	if values.Host != "" {
 		req.Host = values.Host
 	}

@@ -41,3 +41,21 @@ func TestBuildRuntimeHeaderValuesUsesRuntimeAPIFormat(t *testing.T) {
 		t.Fatalf("expected runtime mode marker in user agent, got %q", values.UserAgent)
 	}
 }
+
+func TestBuildStreamingHeaderValuesUsesKiroCLIFingerprint(t *testing.T) {
+	account := &config.Account{ClientMode: config.ClientModeKiroCLI}
+	values := buildStreamingHeaderValues(account, "q.us-east-1.amazonaws.com")
+
+	if !strings.Contains(values.UserAgent, "aws-sdk-rust/1.3.14") {
+		t.Fatalf("expected rust sdk marker in cli user agent, got %q", values.UserAgent)
+	}
+	if !strings.Contains(values.UserAgent, "app/AmazonQ-For-CLI") {
+		t.Fatalf("expected AmazonQ CLI app marker, got %q", values.UserAgent)
+	}
+	if strings.Contains(values.UserAgent, "KiroIDE") {
+		t.Fatalf("did not expect KiroIDE marker in cli mode user agent, got %q", values.UserAgent)
+	}
+	if !strings.Contains(values.AmzUserAgent, "api/codewhispererstreaming/0.1.14474") {
+		t.Fatalf("expected cli streaming api marker in x-amz-user-agent, got %q", values.AmzUserAgent)
+	}
+}
