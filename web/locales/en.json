@@ -1,7 +1,6 @@
 {
   "login.title": "Sign in",
   "login.subtitle": "Enter admin password to continue",
-
   "login.password": "Admin Password",
   "login.passwordPlaceholder": "Enter password",
   "login.submit": "Login",
@@ -431,5 +430,15 @@
   "apiKeys.closeBtn": "Close",
   "apiKeys.saveBtn": "Save",
   "apiKeys.cancelBtn": "Cancel",
-  "apiKeys.loadFailed": "Failed to load API keys"
+  "apiKeys.loadFailed": "Failed to load API keys",
+  "settings.clientModeSettings": "Client Simulation Mode",
+  "settings.clientMode": "Global Client Mode",
+  "settings.clientModeKiroIde": "Kiro IDE",
+  "settings.clientModeKiroCli": "Kiro CLI",
+  "settings.clientModeHint": "Kiro CLI mode uses the official kiro-cli origin, envState, User-Agent, and token refresh request fingerprint. Per-account overrides are available in account details.",
+  "settings.saveClientMode": "Save Client Mode",
+  "settings.clientModeSaved": "Client mode saved",
+  "detail.clientMode": "Client Mode",
+  "detail.clientModeDefault": "Use global setting",
+  "detail.clientModeHint": "Leave empty to follow the global setting; choose Kiro CLI to use the kiro-cli request fingerprint for this account only."
 }

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"kiro-go/config"
 	"strings"
 	"testing"
 )
@@ -385,4 +386,30 @@ func schemaContainsKey(value interface{}, key string) bool {
 		}
 	}
 	return false
+}
+
+func TestApplyClientModeToPayloadInjectsKiroCLIEnvState(t *testing.T) {
+	if err := config.Init(t.TempDir() + "/config.json"); err != nil {
+		t.Fatalf("init config: %v", err)
+	}
+	if err := config.UpdateClientMode(config.ClientModeKiroCLI); err != nil {
+		t.Fatalf("update client mode: %v", err)
+	}
+	defer config.UpdateClientMode(config.ClientModeKiroIDE)
+
+	payload := ClaudeToKiro(&ClaudeRequest{
+		Model:    "claude-sonnet-4.5",
+		Messages: []ClaudeMessage{{Role: "user", Content: "hello"}},
+	}, false)
+
+	msg := payload.ConversationState.CurrentMessage.UserInputMessage
+	if msg.Origin != "KIRO_CLI" {
+		t.Fatalf("expected KIRO_CLI origin, got %q", msg.Origin)
+	}
+	if msg.UserInputMessageContext == nil || msg.UserInputMessageContext.EnvState == nil {
+		t.Fatalf("expected envState in cli mode")
+	}
+	if msg.UserInputMessageContext.EnvState.OperatingSystem != "linux" {
+		t.Fatalf("expected linux envState, got %#v", msg.UserInputMessageContext.EnvState)
+	}
 }

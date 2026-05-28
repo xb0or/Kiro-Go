@@ -19,7 +19,7 @@ const (
 
 // GetUsageLimits 获取账户使用量和订阅信息
 func GetUsageLimits(account *config.Account) (*UsageLimitsResponse, error) {
-	url := fmt.Sprintf("%s/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST&isEmailRequired=true", kiroRestAPIBase)
+	url := fmt.Sprintf("%s/getUsageLimits?origin=%s&resourceType=AGENTIC_REQUEST&isEmailRequired=true", kiroRestAPIBase, config.GetOrigin(account))
 	url = withProfileArnQuery(url, account)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -80,7 +80,7 @@ func GetUserInfo(account *config.Account) (*UserInfoResponse, error) {
 
 // ListAvailableModels 获取可用模型列表
 func ListAvailableModels(account *config.Account) ([]ModelInfo, error) {
-	url := fmt.Sprintf("%s/ListAvailableModels?origin=AI_EDITOR&maxResults=50", kiroRestAPIBase)
+	url := fmt.Sprintf("%s/ListAvailableModels?origin=%s&maxResults=50", kiroRestAPIBase, config.GetOrigin(account))
 	url = withProfileArnQuery(url, account)
 
 	req, err := http.NewRequest("GET", url, nil)

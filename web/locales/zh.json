@@ -1,7 +1,6 @@
 {
   "login.title": "登录",
   "login.subtitle": "请输入管理密码以继续",
-
   "login.password": "管理密码",
   "login.passwordPlaceholder": "输入密码",
   "login.submit": "登录",
@@ -431,5 +430,15 @@
   "apiKeys.closeBtn": "关闭",
   "apiKeys.saveBtn": "保存",
   "apiKeys.cancelBtn": "取消",
-  "apiKeys.loadFailed": "加载 API Key 列表失败"
+  "apiKeys.loadFailed": "加载 API Key 列表失败",
+  "settings.clientModeSettings": "客户端模拟模式",
+  "settings.clientMode": "全局客户端模式",
+  "settings.clientModeKiroIde": "Kiro IDE",
+  "settings.clientModeKiroCli": "Kiro CLI",
+  "settings.clientModeHint": "Kiro CLI 模式会使用官方 kiro-cli 的 origin、envState、User-Agent 与 Token 刷新请求特征。账号详情中可单独覆盖。",
+  "settings.saveClientMode": "保存客户端模式",
+  "settings.clientModeSaved": "客户端模式已保存",
+  "detail.clientMode": "客户端模式",
+  "detail.clientModeDefault": "跟随全局设置",
+  "detail.clientModeHint": "留空则跟随全局设置；选择 Kiro CLI 可仅让该账号使用 kiro-cli 请求特征。"
 }

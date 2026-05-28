@@ -18,6 +18,7 @@ If this project helps you, a Star would mean a lot.
 - Multiple auth: AWS Builder ID, IAM Identity Center (Enterprise SSO), SSO Token, local cache, credentials JSON
 - Usage tracking, account import/export, i18n (CN / EN)
 - Support configuring outbound proxy (SOCKS5 / HTTP)
+- Support Kiro IDE / Kiro CLI client simulation modes
 
 ## Quick Start
 
@@ -94,6 +95,24 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
+## Kiro CLI Mode
+
+This project supports global and per-account `clientMode`:
+
+- `kiro-ide`: default mode, preserving the existing Kiro IDE request fingerprint.
+- `kiro-cli`: simulates the official kiro-cli `origin=KIRO_CLI`, `envState`, User-Agent, `x-amzn-codewhisperer-optout=false`, and compact token refresh headers.
+
+Change the global mode in **Settings - Client Simulation Mode**, or override it per account in account details. Config example:
+
+```json
+{
+  "clientMode": "kiro-cli",
+  "accounts": [
+    { "refreshToken": "...", "clientMode": "kiro-cli" }
+  ]
+}
+```
+
 ## Thinking Mode
 
 Append a suffix (default `-thinking`) to the model name, e.g. `claude-sonnet-4.5-thinking`. Claude-compatible requests that include a top-level `thinking` config such as `{"type":"enabled","budget_tokens":2048}` or `{"type":"adaptive"}` also enable thinking mode automatically. Configure output format in the admin panel under Settings - Thinking Mode.
@@ -110,6 +129,7 @@ The setting takes effect immediately without restarting.
 |----------|-------------|---------|
 | `CONFIG_PATH` | Config file path | `data/config.json` |
 | `ADMIN_PASSWORD` | Admin panel password (overrides config) | - |
+| `LOG_LEVEL` | Log level: debug/info/warn/error | `info` |
 
 ## Contributing
 

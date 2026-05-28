@@ -2176,46 +2176,48 @@ func (h *Handler) apiGetAccounts(w http.ResponseWriter, r *http.Request) {
 		stats := statsMap[a.ID]
 
 		result[i] = map[string]interface{}{
-			"id":                a.ID,
-			"email":             a.Email,
-			"userId":            a.UserId,
-			"nickname":          a.Nickname,
-			"authMethod":        a.AuthMethod,
-			"provider":          a.Provider,
-			"region":            a.Region,
-			"enabled":           a.Enabled,
-			"banStatus":         a.BanStatus,
-			"banReason":         a.BanReason,
-			"banTime":           a.BanTime,
-			"expiresAt":         a.ExpiresAt,
-			"hasToken":          a.AccessToken != "",
-			"machineId":         a.MachineId,
-			"weight":            a.Weight,
-			"overageStatus":     a.OverageStatus,
-			"overageCapability": a.OverageCapability,
-			"overageCap":        a.OverageCap,
-			"overageRate":       a.OverageRate,
-			"currentOverages":   a.CurrentOverages,
-			"overageCheckedAt":  a.OverageCheckedAt,
-			"proxyURL":          a.ProxyURL,
-			"subscriptionType":  a.SubscriptionType,
-			"subscriptionTitle": a.SubscriptionTitle,
-			"daysRemaining":     a.DaysRemaining,
-			"usageCurrent":      a.UsageCurrent,
-			"usageLimit":        a.UsageLimit,
-			"usagePercent":      a.UsagePercent,
-			"nextResetDate":     a.NextResetDate,
-			"lastRefresh":       a.LastRefresh,
-			"trialUsageCurrent": a.TrialUsageCurrent,
-			"trialUsageLimit":   a.TrialUsageLimit,
-			"trialUsagePercent": a.TrialUsagePercent,
-			"trialStatus":       a.TrialStatus,
-			"trialExpiresAt":    a.TrialExpiresAt,
-			"requestCount":      stats.RequestCount,
-			"errorCount":        stats.ErrorCount,
-			"totalTokens":       stats.TotalTokens,
-			"totalCredits":      stats.TotalCredits,
-			"lastUsed":          stats.LastUsed,
+			"id":                  a.ID,
+			"email":               a.Email,
+			"userId":              a.UserId,
+			"nickname":            a.Nickname,
+			"authMethod":          a.AuthMethod,
+			"provider":            a.Provider,
+			"region":              a.Region,
+			"enabled":             a.Enabled,
+			"banStatus":           a.BanStatus,
+			"banReason":           a.BanReason,
+			"banTime":             a.BanTime,
+			"expiresAt":           a.ExpiresAt,
+			"hasToken":            a.AccessToken != "",
+			"machineId":           a.MachineId,
+			"clientMode":          a.ClientMode,
+			"effectiveClientMode": config.EffectiveClientMode(&a),
+			"weight":              a.Weight,
+			"overageStatus":       a.OverageStatus,
+			"overageCapability":   a.OverageCapability,
+			"overageCap":          a.OverageCap,
+			"overageRate":         a.OverageRate,
+			"currentOverages":     a.CurrentOverages,
+			"overageCheckedAt":    a.OverageCheckedAt,
+			"proxyURL":            a.ProxyURL,
+			"subscriptionType":    a.SubscriptionType,
+			"subscriptionTitle":   a.SubscriptionTitle,
+			"daysRemaining":       a.DaysRemaining,
+			"usageCurrent":        a.UsageCurrent,
+			"usageLimit":          a.UsageLimit,
+			"usagePercent":        a.UsagePercent,
+			"nextResetDate":       a.NextResetDate,
+			"lastRefresh":         a.LastRefresh,
+			"trialUsageCurrent":   a.TrialUsageCurrent,
+			"trialUsageLimit":     a.TrialUsageLimit,
+			"trialUsagePercent":   a.TrialUsagePercent,
+			"trialStatus":         a.TrialStatus,
+			"trialExpiresAt":      a.TrialExpiresAt,
+			"requestCount":        stats.RequestCount,
+			"errorCount":          stats.ErrorCount,
+			"totalTokens":         stats.TotalTokens,
+			"totalCredits":        stats.TotalCredits,
+			"lastUsed":            stats.LastUsed,
 		}
 	}
 	json.NewEncoder(w).Encode(result)
@@ -2303,6 +2305,19 @@ func (h *Handler) apiUpdateAccount(w http.ResponseWriter, r *http.Request, id st
 	}
 	if v, ok := updates["proxyURL"].(string); ok {
 		existing.ProxyURL = v
+	}
+	if v, ok := updates["clientMode"].(string); ok {
+		mode := config.ClientMode(strings.TrimSpace(v))
+		switch mode {
+		case "":
+			existing.ClientMode = ""
+		case config.ClientModeKiroIDE, config.ClientModeKiroCLI:
+			existing.ClientMode = mode
+		default:
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid clientMode, must be: default, kiro-ide, or kiro-cli"})
+			return
+		}
 	}
 
 	if err := config.UpdateAccount(id, *existing); err != nil {
@@ -2784,10 +2799,21 @@ func (h *Handler) apiImportCredentials(w http.ResponseWriter, r *http.Request) {
 		AuthMethod   string `json:"authMethod"`
 		Provider     string `json:"provider"`
 		Region       string `json:"region"`
+		ClientMode   string `json:"clientMode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
+		return
+	}
+
+	req.ClientMode = strings.TrimSpace(req.ClientMode)
+	if req.ClientMode == "default" {
+		req.ClientMode = ""
+	}
+	if req.ClientMode != "" && req.ClientMode != string(config.ClientModeKiroIDE) && req.ClientMode != string(config.ClientModeKiroCLI) {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid clientMode, must be: kiro-ide or kiro-cli"})
 		return
 	}
 
@@ -2831,6 +2857,8 @@ func (h *Handler) apiImportCredentials(w http.ResponseWriter, r *http.Request) {
 		ClientSecret: req.ClientSecret,
 		AuthMethod:   req.AuthMethod,
 		Region:       req.Region,
+		MachineId:    config.GenerateMachineId(),
+		ClientMode:   config.ClientMode(req.ClientMode),
 	}
 	newAccessToken, newRefreshToken, newExpiresAt, newProfileArn, err := auth.RefreshToken(tempAccount)
 	if err != nil {
@@ -2867,8 +2895,9 @@ func (h *Handler) apiImportCredentials(w http.ResponseWriter, r *http.Request) {
 		Region:       req.Region,
 		ExpiresAt:    expiresAt,
 		Enabled:      true,
-		MachineId:    config.GenerateMachineId(),
+		MachineId:    tempAccount.MachineId,
 		ProfileArn:   newProfileArn,
+		ClientMode:   config.ClientMode(req.ClientMode),
 	}
 
 	if err := config.AddAccount(account); err != nil {
@@ -2907,6 +2936,7 @@ func (h *Handler) apiGetSettings(w http.ResponseWriter, r *http.Request) {
 		"port":           config.GetPort(),
 		"host":           config.GetHost(),
 		"allowOverUsage": config.GetAllowOverUsage(),
+		"clientMode":     config.GetClientMode(),
 	})
 }
 
@@ -2959,6 +2989,7 @@ func (h *Handler) apiUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		RequireApiKey  *bool   `json:"requireApiKey,omitempty"`
 		Password       string  `json:"password,omitempty"`
 		AllowOverUsage *bool   `json:"allowOverUsage,omitempty"`
+		ClientMode     *string `json:"clientMode,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(400)
@@ -2970,6 +3001,20 @@ func (h *Handler) apiUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+
+	if req.ClientMode != nil {
+		mode := config.ClientMode(strings.TrimSpace(*req.ClientMode))
+		if mode != config.ClientModeKiroIDE && mode != config.ClientModeKiroCLI {
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid clientMode, must be: kiro-ide or kiro-cli"})
+			return
+		}
+		if err := config.UpdateClientMode(mode); err != nil {
+			w.WriteHeader(500)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
 	}
 
 	// 更新超额使用设置
@@ -3213,49 +3258,51 @@ func (h *Handler) apiGetAccountFull(w http.ResponseWriter, r *http.Request, id s
 
 	// 返回完整账号信息（包含敏感字段）
 	result := map[string]interface{}{
-		"id":                account.ID,
-		"email":             account.Email,
-		"userId":            account.UserId,
-		"nickname":          account.Nickname,
-		"accessToken":       account.AccessToken,
-		"refreshToken":      account.RefreshToken,
-		"clientId":          account.ClientID,
-		"clientSecret":      account.ClientSecret,
-		"authMethod":        account.AuthMethod,
-		"provider":          account.Provider,
-		"region":            account.Region,
-		"expiresAt":         account.ExpiresAt,
-		"machineId":         account.MachineId,
-		"weight":            account.Weight,
-		"overageStatus":     account.OverageStatus,
-		"overageCapability": account.OverageCapability,
-		"overageCap":        account.OverageCap,
-		"overageRate":       account.OverageRate,
-		"currentOverages":   account.CurrentOverages,
-		"overageCheckedAt":  account.OverageCheckedAt,
-		"proxyURL":          account.ProxyURL,
-		"enabled":           account.Enabled,
-		"banStatus":         account.BanStatus,
-		"banReason":         account.BanReason,
-		"banTime":           account.BanTime,
-		"subscriptionType":  account.SubscriptionType,
-		"subscriptionTitle": account.SubscriptionTitle,
-		"daysRemaining":     account.DaysRemaining,
-		"usageCurrent":      account.UsageCurrent,
-		"usageLimit":        account.UsageLimit,
-		"usagePercent":      account.UsagePercent,
-		"nextResetDate":     account.NextResetDate,
-		"lastRefresh":       account.LastRefresh,
-		"trialUsageCurrent": account.TrialUsageCurrent,
-		"trialUsageLimit":   account.TrialUsageLimit,
-		"trialUsagePercent": account.TrialUsagePercent,
-		"trialStatus":       account.TrialStatus,
-		"trialExpiresAt":    account.TrialExpiresAt,
-		"requestCount":      stats.RequestCount,
-		"errorCount":        stats.ErrorCount,
-		"totalTokens":       stats.TotalTokens,
-		"totalCredits":      stats.TotalCredits,
-		"lastUsed":          stats.LastUsed,
+		"id":                  account.ID,
+		"email":               account.Email,
+		"userId":              account.UserId,
+		"nickname":            account.Nickname,
+		"accessToken":         account.AccessToken,
+		"refreshToken":        account.RefreshToken,
+		"clientId":            account.ClientID,
+		"clientSecret":        account.ClientSecret,
+		"authMethod":          account.AuthMethod,
+		"provider":            account.Provider,
+		"region":              account.Region,
+		"expiresAt":           account.ExpiresAt,
+		"machineId":           account.MachineId,
+		"clientMode":          account.ClientMode,
+		"effectiveClientMode": config.EffectiveClientMode(account),
+		"weight":              account.Weight,
+		"overageStatus":       account.OverageStatus,
+		"overageCapability":   account.OverageCapability,
+		"overageCap":          account.OverageCap,
+		"overageRate":         account.OverageRate,
+		"currentOverages":     account.CurrentOverages,
+		"overageCheckedAt":    account.OverageCheckedAt,
+		"proxyURL":            account.ProxyURL,
+		"enabled":             account.Enabled,
+		"banStatus":           account.BanStatus,
+		"banReason":           account.BanReason,
+		"banTime":             account.BanTime,
+		"subscriptionType":    account.SubscriptionType,
+		"subscriptionTitle":   account.SubscriptionTitle,
+		"daysRemaining":       account.DaysRemaining,
+		"usageCurrent":        account.UsageCurrent,
+		"usageLimit":          account.UsageLimit,
+		"usagePercent":        account.UsagePercent,
+		"nextResetDate":       account.NextResetDate,
+		"lastRefresh":         account.LastRefresh,
+		"trialUsageCurrent":   account.TrialUsageCurrent,
+		"trialUsageLimit":     account.TrialUsageLimit,
+		"trialUsagePercent":   account.TrialUsagePercent,
+		"trialStatus":         account.TrialStatus,
+		"trialExpiresAt":      account.TrialExpiresAt,
+		"requestCount":        stats.RequestCount,
+		"errorCount":          stats.ErrorCount,
+		"totalTokens":         stats.TotalTokens,
+		"totalCredits":        stats.TotalCredits,
+		"lastUsed":            stats.LastUsed,
 	}
 
 	json.NewEncoder(w).Encode(result)
@@ -3500,6 +3547,7 @@ func (h *Handler) apiExportAccounts(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt    int64  `json:"expiresAt"`
 		AuthMethod   string `json:"authMethod,omitempty"`
 		Provider     string `json:"provider,omitempty"`
+		ClientMode   string `json:"clientMode,omitempty"`
 	}
 
 	type ExportSubscription struct {
@@ -3521,6 +3569,7 @@ func (h *Handler) apiExportAccounts(w http.ResponseWriter, r *http.Request) {
 		Idp          string             `json:"idp"`
 		UserId       string             `json:"userId,omitempty"`
 		MachineId    string             `json:"machineId,omitempty"`
+		ClientMode   string             `json:"clientMode,omitempty"`
 		Credentials  ExportCredentials  `json:"credentials"`
 		Subscription ExportSubscription `json:"subscription"`
 		Usage        ExportUsage        `json:"usage"`
@@ -3568,12 +3617,13 @@ func (h *Handler) apiExportAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 
 		exportAccounts = append(exportAccounts, ExportAccount{
-			ID:        a.ID,
-			Email:     a.Email,
-			Nickname:  a.Nickname,
-			Idp:       idp,
-			UserId:    a.UserId,
-			MachineId: a.MachineId,
+			ID:         a.ID,
+			Email:      a.Email,
+			Nickname:   a.Nickname,
+			Idp:        idp,
+			UserId:     a.UserId,
+			MachineId:  a.MachineId,
+			ClientMode: string(a.ClientMode),
 			Credentials: ExportCredentials{
 				AccessToken:  a.AccessToken,
 				CsrfToken:    "",
@@ -3584,6 +3634,7 @@ func (h *Handler) apiExportAccounts(w http.ResponseWriter, r *http.Request) {
 				ExpiresAt:    a.ExpiresAt * 1000, // 转为毫秒时间戳
 				AuthMethod:   authMethod,
 				Provider:     a.Provider,
+				ClientMode:   string(a.ClientMode),
 			},
 			Subscription: ExportSubscription{
 				Type:  subType,
