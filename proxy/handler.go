@@ -1339,43 +1339,6 @@ func (h *Handler) recordFailure() {
 	atomic.AddInt64(&h.failedRequests, 1)
 }
 
-// checkOverageError 检测 402 超额错误并刷新该账号的上游 Overage 状态缓存。
-// 本地不再保留旧的 AllowOverage 字段；调度跳过逻辑直接读 OverageStatus，
-// 因此这里只需把上游最新状态拉回来写入即可。
-func (h *Handler) checkOverageError(err error, accountID string) {
-	if err == nil {
-		return
-	}
-	errMsg := err.Error()
-	if !(strings.Contains(errMsg, "402") && strings.Contains(errMsg, "OVERAGE")) {
-		return
-	}
-	logger.Warnf("[Overage] Detected overage limit error for account %s, refreshing upstream status", accountID)
-
-	go func(id string) {
-		accounts := config.GetAccounts()
-		var acc *config.Account
-		for i := range accounts {
-			if accounts[i].ID == id {
-				acc = &accounts[i]
-				break
-			}
-		}
-		if acc == nil {
-			return
-		}
-		snap, fetchErr := FetchOverageStatus(acc)
-		if fetchErr != nil {
-			logger.Warnf("[Overage] refresh after 402 failed for %s: %v", acc.Email, fetchErr)
-			return
-		}
-		if persistErr := PersistOverageSnapshot(id, snap); persistErr != nil {
-			logger.Warnf("[Overage] persist after 402 failed for %s: %v", acc.Email, persistErr)
-		}
-		h.pool.Reload()
-	}(accountID)
-}
-
 // handleClaudeNonStream Claude 非流式响应
 func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, thinkingOpts claudeThinkingResponseOptions, estimatedInputTokens int, cacheProfile *promptCacheProfile, apiKeyID string) {
 	excluded := make(map[string]bool)
