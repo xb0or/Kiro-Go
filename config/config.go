@@ -106,6 +106,13 @@ type Account struct {
 	CurrentOverages   float64 `json:"currentOverages,omitempty"`   // Cumulative overage charges (USD)
 	OverageCheckedAt  int64   `json:"overageCheckedAt,omitempty"`  // Last successful upstream sync (Unix seconds)
 
+	// LegacyAllowOverage is kept for backward-compatible JSON loading only.
+	// Pre-Overages-switch deployments persisted `allowOverage: true` to mean
+	// "keep dispatching when quota is exhausted". On first load we migrate it
+	// into OverageStatus="ENABLED" and zero this field so it does not get
+	// re-emitted on future saves. Do not read this field elsewhere.
+	LegacyAllowOverage bool `json:"allowOverage,omitempty"`
+
 	// Account status
 	Enabled   bool   `json:"enabled"`             // Whether account is active in the pool
 	BanStatus string `json:"banStatus,omitempty"` // Ban status: "ACTIVE", "BANNED", "SUSPENDED"
@@ -264,7 +271,7 @@ type AccountInfo struct {
 }
 
 // Version current version
-const Version = "1.0.9"
+const Version = "1.1.1"
 
 var (
 	cfg     *Config
@@ -374,6 +381,28 @@ func Load() error {
 			Migrated:  true,
 			CreatedAt: time.Now().Unix(),
 		})
+		if err := saveLocked(); err != nil {
+			return err
+		}
+	}
+	// Migration: per-account AllowOverage → OverageStatus.
+	// Pre-Overages-switch deployments stored `allowOverage: true` to mean "keep
+	// dispatching when quota is exhausted". The new model reads OverageStatus
+	// from the upstream AWS Q switch instead. To avoid silently disabling
+	// previously-allowed accounts on first launch, treat allowOverage=true as
+	// OverageStatus="ENABLED" (operators can refresh from AWS later). The
+	// legacy field is then cleared so future saves don't re-emit it.
+	overageMigrated := false
+	for i := range cfg.Accounts {
+		if cfg.Accounts[i].LegacyAllowOverage {
+			if cfg.Accounts[i].OverageStatus == "" {
+				cfg.Accounts[i].OverageStatus = "ENABLED"
+			}
+			cfg.Accounts[i].LegacyAllowOverage = false
+			overageMigrated = true
+		}
+	}
+	if overageMigrated {
 		if err := saveLocked(); err != nil {
 			return err
 		}
