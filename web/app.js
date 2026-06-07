@@ -799,6 +799,37 @@
     if (diff < 86400) return Math.floor(diff / 3600) + t('time.hours');
     return Math.floor(diff / 86400) + t('time.days');
   }
+  // Relative "time ago" for a past Unix timestamp. Returns '' when unset.
+  function formatLastUsed(ts) {
+    if (!ts) return '';
+    const diff = Date.now() / 1000 - ts;
+    if (diff < 0) return '';
+    let val;
+    if (diff < 3600) val = Math.max(1, Math.floor(diff / 60)) + t('time.minutes');
+    else if (diff < 86400) val = Math.floor(diff / 3600) + t('time.hours');
+    else val = Math.floor(diff / 86400) + t('time.days');
+    return t('time.ago', val);
+  }
+  // Informational meta badges shown alongside status badges in the account list:
+  // region (or region count for multi-region idc), client mode, and last-used.
+  function getMetaBadges(a) {
+    const out = [];
+    const regions = Array.isArray(a.regions) && a.regions.length ? a.regions : (a.region ? [a.region] : []);
+    if (regions.length > 1) {
+      out.push('<span class="badge badge-meta" title="' + escapeAttr(regions.join(', ')) + '">' + escapeHtml(t('accounts.regionCount', regions.length)) + '</span>');
+    } else if (regions.length === 1) {
+      out.push('<span class="badge badge-meta">' + escapeHtml(regions[0]) + '</span>');
+    }
+    const mode = a.effectiveClientMode || a.clientMode;
+    if (mode) {
+      out.push('<span class="badge badge-meta">' + escapeHtml(formatClientMode(mode)) + '</span>');
+    }
+    const lastUsed = formatLastUsed(a.lastUsed);
+    if (lastUsed) {
+      out.push('<span class="badge badge-meta">' + escapeHtml(lastUsed) + '</span>');
+    }
+    return out.join('');
+  }
   function formatNum(n) {
     if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
     if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
@@ -872,6 +903,7 @@
         overageBadge +
         '<span class="badge badge-info">' + escapeHtml(formatAuthMethod(a.provider || a.authMethod)) + '</span>' +
         getStatusBadge(a) +
+        getMetaBadges(a) +
         '</div>' +
         '</div>' +
         '</div>' +

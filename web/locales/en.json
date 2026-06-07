@@ -83,6 +83,8 @@
   "time.minutes": "min",
   "time.hours": "hr",
   "time.days": "d",
+  "time.ago": "{0} ago",
+  "accounts.regionCount": "{0} regions",
   "settings.apiSettings": "API Settings",
   "settings.enableApiKey": "Enable API Key Verification",
   "settings.apiKeyPlaceholder": "Leave empty to disable",
