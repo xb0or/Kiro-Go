@@ -332,6 +332,16 @@
             </label>
             <small data-i18n="settings.endpointFallbackHint"></small>
           </div>
+          <div class="form-group">
+            <label data-i18n="settings.orgRPMLimit"></label>
+            <input type="number" id="orgRPMLimit" min="0" step="1" />
+            <small data-i18n="settings.orgRPMLimitHint"></small>
+          </div>
+          <div class="form-group">
+            <label data-i18n="settings.rateLimitMaxWait"></label>
+            <input type="number" id="rateLimitMaxWaitMs" min="0" step="1000" />
+            <small data-i18n="settings.rateLimitMaxWaitHint"></small>
+          </div>
           <button class="btn btn-primary" id="saveEndpointBtn" data-i18n="settings.saveEndpoint"></button>
         </div>
 

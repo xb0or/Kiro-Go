@@ -428,6 +428,23 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		}
 	}
 
+	// Smooth queuing against the shared organization RPM. idc accounts in one
+	// AWS org share a single requests-per-minute ceiling per region; bursting
+	// past it returns 429 and interrupts the coding session. We pace requests
+	// per {account,region} bucket here: wait for a token instead of firing and
+	// retrying on 429. The wait is capped so a saturated bucket fails fast and
+	// falls through to account/region failover rather than blocking past the
+	// client's request timeout. rpm=0 disables this and keeps legacy behavior.
+	if rpm := config.GetOrgRPMLimit(); rpm > 0 && account != nil {
+		key := account.ID + ":" + dispatchRegion
+		maxWait := time.Duration(config.GetRateLimitMaxWaitMs()) * time.Millisecond
+		if !globalRateLimiter.Wait(key, rpm, maxWait) {
+			logger.Warnf("[KiroAPI] Rate limit queue timeout: account=%s region=%s rpm=%d maxWaitMs=%d",
+				account.Email, dispatchRegion, rpm, config.GetRateLimitMaxWaitMs())
+			return fmt.Errorf("rate limit queue timeout for %s region=%s (rpm=%d): quota exhausted", account.Email, dispatchRegion, rpm)
+		}
+	}
+
 	if _, err := json.Marshal(payload); err != nil {
 		return err
 	}

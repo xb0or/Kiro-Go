@@ -3502,16 +3502,20 @@ func (h *Handler) apiUpdateThinkingConfig(w http.ResponseWriter, r *http.Request
 // apiGetEndpointConfig 获取端点配置
 func (h *Handler) apiGetEndpointConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"preferredEndpoint": config.GetPreferredEndpoint(),
-		"endpointFallback":  config.GetEndpointFallback(),
+		"preferredEndpoint":  config.GetPreferredEndpoint(),
+		"endpointFallback":   config.GetEndpointFallback(),
+		"orgRPMLimit":        config.GetOrgRPMLimit(),
+		"rateLimitMaxWaitMs": config.GetRateLimitMaxWaitMs(),
 	})
 }
 
 // apiUpdateEndpointConfig 更新端点配置
 func (h *Handler) apiUpdateEndpointConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PreferredEndpoint string `json:"preferredEndpoint"`
-		EndpointFallback  *bool  `json:"endpointFallback"`
+		PreferredEndpoint  string `json:"preferredEndpoint"`
+		EndpointFallback   *bool  `json:"endpointFallback"`
+		OrgRPMLimit        *int   `json:"orgRPMLimit"`
+		RateLimitMaxWaitMs *int   `json:"rateLimitMaxWaitMs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(400)
@@ -3534,6 +3538,22 @@ func (h *Handler) apiUpdateEndpointConfig(w http.ResponseWriter, r *http.Request
 
 	if req.EndpointFallback != nil {
 		config.UpdateEndpointFallback(*req.EndpointFallback)
+	}
+
+	if req.OrgRPMLimit != nil {
+		rpm := *req.OrgRPMLimit
+		if rpm < 0 {
+			rpm = 0
+		}
+		config.UpdateOrgRPMLimit(rpm)
+	}
+
+	if req.RateLimitMaxWaitMs != nil {
+		ms := *req.RateLimitMaxWaitMs
+		if ms < 0 {
+			ms = 0
+		}
+		config.UpdateRateLimitMaxWaitMs(ms)
 	}
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

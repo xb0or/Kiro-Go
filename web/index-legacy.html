@@ -1033,6 +1033,18 @@
                     <small style="color:#64748b;font-size:12px;margin-top:4px;display:block"
                         data-i18n="settings.endpointFallbackHint"></small>
                 </div>
+                <div class="form-group">
+                    <label data-i18n="settings.orgRPMLimit"></label>
+                    <input type="number" id="orgRPMLimit" min="0" step="1">
+                    <small style="color:#64748b;font-size:12px;margin-top:4px;display:block"
+                        data-i18n="settings.orgRPMLimitHint"></small>
+                </div>
+                <div class="form-group">
+                    <label data-i18n="settings.rateLimitMaxWait"></label>
+                    <input type="number" id="rateLimitMaxWaitMs" min="0" step="1000">
+                    <small style="color:#64748b;font-size:12px;margin-top:4px;display:block"
+                        data-i18n="settings.rateLimitMaxWaitHint"></small>
+                </div>
                 <button class="btn btn-primary" onclick="saveEndpointConfig()"
                     data-i18n="settings.saveEndpoint"></button>
             </div>
@@ -1233,6 +1245,10 @@
                 'settings.endpointHint': '选择首选端点，自动选择模式下会根据可用性自动选择端点',
                 'settings.endpointFallback': '端点不可用时自动切换',
                 'settings.endpointFallbackHint': '关闭后，仅使用选定的端点，不会自动切换到其他端点',
+                'settings.orgRPMLimit': '组织每分钟请求上限 (RPM)',
+                'settings.orgRPMLimitHint': '按「账号+区域」平滑排队，避免突发请求撞上共享 RPM 限制导致 429 中断。0 = 关闭限速（保持原行为）',
+                'settings.rateLimitMaxWait': '排队等待上限 (毫秒)',
+                'settings.rateLimitMaxWaitHint': '请求排队等待令牌的最长时间，超过则快速失败并切换账号/区域，避免拖到客户端超时。0 = 默认 25000',
                 'settings.saveEndpoint': '保存端点设置',
                 'settings.endpointSaved': '端点设置已保存',
                 'settings.adminPassword': '管理密码',
@@ -1518,6 +1534,10 @@
                 'settings.endpointHint': 'Select preferred endpoint. In auto-select mode, the endpoint is automatically selected based on availability.',
                 'settings.endpointFallback': 'Fallback to other endpoints',
                 'settings.endpointFallbackHint': 'When disabled, only the selected endpoint is used without automatic fallback',
+                'settings.orgRPMLimit': 'Org requests-per-minute cap (RPM)',
+                'settings.orgRPMLimitHint': 'Smoothly queues requests per {account, region} so bursts do not hit the shared RPM ceiling and cause 429 interruptions. 0 = disabled (legacy behavior)',
+                'settings.rateLimitMaxWait': 'Max queue wait (ms)',
+                'settings.rateLimitMaxWaitHint': 'Longest a request waits for a token before failing fast and rotating account/region, so it never drags past the client timeout. 0 = default 25000',
                 'settings.saveEndpoint': 'Save Endpoint Settings',
                 'settings.endpointSaved': 'Endpoint settings saved',
                 'settings.adminPassword': 'Admin Password',
@@ -2499,11 +2519,13 @@
             const d = await res.json();
             document.getElementById('preferredEndpoint').value = d.preferredEndpoint || 'auto';
             document.getElementById('endpointFallback').checked = d.endpointFallback !== false;
+            document.getElementById('orgRPMLimit').value = d.orgRPMLimit || 0;
+            document.getElementById('rateLimitMaxWaitMs').value = d.rateLimitMaxWaitMs || 0;
         }
         async function saveEndpointConfig() {
             const res = await fetch('/admin/api/endpoint', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
-                body: JSON.stringify({ preferredEndpoint: document.getElementById('preferredEndpoint').value, endpointFallback: document.getElementById('endpointFallback').checked })
+                body: JSON.stringify({ preferredEndpoint: document.getElementById('preferredEndpoint').value, endpointFallback: document.getElementById('endpointFallback').checked, orgRPMLimit: parseInt(document.getElementById('orgRPMLimit').value, 10) || 0, rateLimitMaxWaitMs: parseInt(document.getElementById('rateLimitMaxWaitMs').value, 10) || 0 })
             });
             const d = await res.json();
             if (d.success) { alert(t('settings.endpointSaved')); } else { alert(t('common.saveFailed') + ': ' + d.error); }

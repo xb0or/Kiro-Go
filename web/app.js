@@ -1596,12 +1596,16 @@
     const d = await res.json();
     $('preferredEndpoint').value = d.preferredEndpoint || 'auto';
     $('endpointFallback').checked = d.endpointFallback !== false;
+    $('orgRPMLimit').value = d.orgRPMLimit || 0;
+    $('rateLimitMaxWaitMs').value = d.rateLimitMaxWaitMs || 0;
   }
   async function saveEndpointConfig() {
     const res = await api('/endpoint', {
       method: 'POST', body: JSON.stringify({
         preferredEndpoint: $('preferredEndpoint').value,
-        endpointFallback: $('endpointFallback').checked
+        endpointFallback: $('endpointFallback').checked,
+        orgRPMLimit: parseInt($('orgRPMLimit').value, 10) || 0,
+        rateLimitMaxWaitMs: parseInt($('rateLimitMaxWaitMs').value, 10) || 0
       })
     });
     const d = await res.json();

@@ -225,6 +225,17 @@ type Config struct {
 	// solely because usageCurrent >= usageLimit.
 	AllowOverUsage bool `json:"allowOverUsage,omitempty"`
 
+	// OrgRPMLimit is the per-{account,region} requests-per-minute ceiling used to
+	// smooth bursts against an organization's shared RPM quota. Requests wait in a
+	// token bucket instead of bursting past the limit and getting 429. 0 disables
+	// the limiter (pre-feature behavior, acts as a kill switch).
+	OrgRPMLimit int `json:"orgRPMLimit,omitempty"`
+
+	// RateLimitMaxWaitMs caps how long a request may wait for a token before
+	// failing fast (so it falls through to account/region failover rather than
+	// blocking past the client's request timeout). 0 falls back to a safe default.
+	RateLimitMaxWaitMs int `json:"rateLimitMaxWaitMs,omitempty"`
+
 	// Proxy configuration: optional outbound proxy for Kiro API requests
 	// Format: "socks5://host:port", "socks5://user:pass@host:port",
 	//         "http://host:port",  "http://user:pass@host:port"
@@ -974,6 +985,51 @@ func UpdateEndpointFallback(enabled bool) error {
 	cfgLock.Lock()
 	defer cfgLock.Unlock()
 	cfg.EndpointFallback = &enabled
+	return Save()
+}
+
+// GetOrgRPMLimit returns the per-{account,region} requests-per-minute ceiling.
+// 0 (default) disables smooth queuing entirely — requests fire immediately and
+// rely on the legacy 429 failover path.
+func GetOrgRPMLimit() int {
+	cfgLock.RLock()
+	defer cfgLock.RUnlock()
+	if cfg == nil {
+		return 0
+	}
+	return cfg.OrgRPMLimit
+}
+
+// UpdateOrgRPMLimit sets the per-{account,region} RPM ceiling and persists it.
+func UpdateOrgRPMLimit(rpm int) error {
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	if rpm < 0 {
+		rpm = 0
+	}
+	cfg.OrgRPMLimit = rpm
+	return Save()
+}
+
+// GetRateLimitMaxWaitMs returns the queue wait cap in milliseconds. Defaults to
+// 25000ms (25s) when unset, leaving headroom under the client's request timeout.
+func GetRateLimitMaxWaitMs() int {
+	cfgLock.RLock()
+	defer cfgLock.RUnlock()
+	if cfg == nil || cfg.RateLimitMaxWaitMs <= 0 {
+		return 25000
+	}
+	return cfg.RateLimitMaxWaitMs
+}
+
+// UpdateRateLimitMaxWaitMs sets the queue wait cap (ms) and persists it.
+func UpdateRateLimitMaxWaitMs(ms int) error {
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	if ms < 0 {
+		ms = 0
+	}
+	cfg.RateLimitMaxWaitMs = ms
 	return Save()
 }
 
