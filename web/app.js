@@ -1076,7 +1076,11 @@
       (String(a.authMethod || '').toLowerCase() === 'idc'
         ? '<div class="detail-item"><div class="detail-label">' + escapeHtml(t('detail.region')) + '</div>' +
           '<div class="detail-value machine-id-row">' +
-          '<input type="text" id="regionInput" value="' + escapeAttr(a.region || 'us-east-1') + '" placeholder="us-east-1" />' +
+          '<input type="text" id="regionInput" list="regionOptions" value="' + escapeAttr(a.region || 'us-east-1') + '" placeholder="us-east-1" />' +
+          '<datalist id="regionOptions">' +
+          ['us-east-1', 'us-west-2', 'eu-central-1', 'eu-west-1', 'ap-southeast-1', 'ap-northeast-1']
+            .map(function (r) { return '<option value="' + r + '"></option>'; }).join('') +
+          '</datalist>' +
           '<button class="btn btn-sm btn-primary" data-detail-action="saveRegion" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
           '</div></div>'
         : detailItem(t('detail.region'), a.region || 'us-east-1')) +
