@@ -2187,6 +2187,7 @@ func (h *Handler) apiGetAccounts(w http.ResponseWriter, r *http.Request) {
 			"provider":            a.Provider,
 			"region":              a.Region,
 			"regions":             a.Regions,
+			"regionUsage":         a.RegionUsage,
 			"enabled":             a.Enabled,
 			"banStatus":           a.BanStatus,
 			"banReason":           a.BanReason,

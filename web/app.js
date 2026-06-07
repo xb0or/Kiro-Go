@@ -811,6 +811,26 @@
     });
   }
 
+  // Renders one main-quota bar per region for multi-region (idc) accounts.
+  // Returns '' when the account has 0 or 1 region quota — the caller then falls
+  // back to the single flat-quota bar.
+  function renderRegionUsageBars(a) {
+    const ru = a.regionUsage;
+    if (!ru || typeof ru !== 'object') return '';
+    const regions = Object.keys(ru);
+    if (regions.length <= 1) return '';
+    return regions.map(function (region) {
+      const q = ru[region] || {};
+      const pct = (q.usagePercent || 0) * 100;
+      const cls = pct > 90 ? 'critical' : pct > 70 ? 'high' : '';
+      return '<div class="account-usage">' +
+        '<div class="usage-label">' + escapeHtml(t('accounts.mainQuota')) + ' · ' + escapeHtml(region) + '</div>' +
+        '<div class="usage-bar"><div class="usage-fill ' + cls + '" data-usage-pct="' + escapeAttr(pct) + '"></div></div>' +
+        '<div class="usage-text"><span>' + (q.usageCurrent != null ? q.usageCurrent.toFixed(1) : 0) + ' / ' + (q.usageLimit != null ? q.usageLimit.toFixed(0) : 0) + '</span><span>' + pct.toFixed(1) + '%</span></div>' +
+        '</div>';
+    }).join('');
+  }
+
   function renderAccounts() {
     const container = $('accountsList');
     if (!container) return;
@@ -828,6 +848,7 @@
       const weight = a.weight || 0;
       const weightBadge = weight >= 2 ? '<span class="badge badge-warning">' + escapeHtml(t('accounts.weightShort')) + ':' + weight + '</span>' : '';
       const overageBadge = renderOverageBadge(a);
+      const regionUsageBars = renderRegionUsageBars(a);
       const banned = a.banStatus && a.banStatus !== 'ACTIVE';
       const idAttr = escapeAttr(a.id);
       const displayEmail = getDisplayEmail(a.email, a.id);
@@ -866,12 +887,13 @@
         '<button class="btn btn-sm btn-danger" data-action="delete" data-id="' + idAttr + '">' + escapeHtml(t('accounts.delete')) + '</button>' +
         '</div>' +
         '</div>' +
-        (a.usageLimit > 0 ?
+        (regionUsageBars ? regionUsageBars :
+          (a.usageLimit > 0 ?
           '<div class="account-usage">' +
           '<div class="usage-label">' + escapeHtml(t('accounts.mainQuota')) + '</div>' +
           '<div class="usage-bar"><div class="usage-fill ' + usageClass + '" data-usage-pct="' + escapeAttr(usagePct) + '"></div></div>' +
           '<div class="usage-text"><span>' + (a.usageCurrent != null ? a.usageCurrent.toFixed(1) : 0) + ' / ' + (a.usageLimit != null ? a.usageLimit.toFixed(0) : 0) + '</span><span>' + usagePct.toFixed(1) + '%</span></div>' +
-          '</div>' : '') +
+          '</div>' : '')) +
         (a.trialUsageLimit > 0 ?
           '<div class="account-usage">' +
           '<div class="usage-label">' + escapeHtml(t('accounts.trialQuota')) + ' ' + escapeHtml(formatTrialExpiry(a.trialExpiresAt)) + '</div>' +
@@ -1130,6 +1152,12 @@
       detailItem(t('detail.tokenExpiry'), a.expiresAt ? new Date(a.expiresAt * 1000).toLocaleString() : '-') +
       detailItem(t('detail.mainQuota'), (a.usageCurrent != null ? a.usageCurrent.toFixed(1) : 0) + ' / ' + (a.usageLimit != null ? a.usageLimit.toFixed(0) : 0)) +
       detailItem(t('detail.resetDate'), a.nextResetDate || '-') +
+      (a.regionUsage && Object.keys(a.regionUsage).length > 1
+        ? Object.keys(a.regionUsage).map(function (region) {
+            const q = a.regionUsage[region] || {};
+            return detailItem(t('detail.mainQuota') + ' · ' + region, (q.usageCurrent != null ? q.usageCurrent.toFixed(1) : 0) + ' / ' + (q.usageLimit != null ? q.usageLimit.toFixed(0) : 0));
+          }).join('')
+        : '') +
       (a.trialUsageLimit > 0 ?
         detailItem(t('detail.trialQuota'), (a.trialUsageCurrent != null ? a.trialUsageCurrent.toFixed(1) : 0) + ' / ' + a.trialUsageLimit.toFixed(0)) +
         detailItem(t('detail.trialStatus'), a.trialStatus || '-') +

@@ -61,6 +61,40 @@ func GetUsageLimits(account *config.Account) (*UsageLimitsResponse, error) {
 	return &result, nil
 }
 
+// GetUsageLimitsForRegion 查询指定 region 的使用量。与 GetUsageLimits 相同，
+// 但 host 用 regionizeURLTo 切到显式 region，并配套该 region 自己的 profileArn
+// （profileArn 是 region 绑定资源，host 与 arn 必须匹配，否则上游超时/报错）。
+func GetUsageLimitsForRegion(account *config.Account, region string) (*UsageLimitsResponse, error) {
+	base := regionizeURLTo(kiroRestAPIBase, region)
+	url := fmt.Sprintf("%s/getUsageLimits?origin=%s&resourceType=AGENTIC_REQUEST&isEmailRequired=true", base, config.GetOrigin(account))
+	if arn, err := ResolveProfileArnForRegion(account, region); err == nil && arn != "" {
+		url += "&profileArn=" + neturl.QueryEscape(arn)
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	setKiroHeaders(req, account)
+
+	resp, err := GetRestClientForProxy(ResolveAccountProxyURL(account)).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result UsageLimitsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // GetUserInfo 获取用户信息
 func GetUserInfo(account *config.Account) (*UserInfoResponse, error) {
 	url := fmt.Sprintf("%s/GetUserInfo", regionizeURL(kiroRestAPIBase, account))
@@ -527,7 +561,63 @@ func RefreshAccountInfo(account *config.Account) (*config.AccountInfo, error) {
 		}
 	}
 
+	// Per-region quota for multi-region (idc) accounts. Each region is billed
+	// against its own profileArn, so quotas are independent. Probe every enabled
+	// region concurrently; a failed region is simply omitted from RegionUsage.
+	if regions := account.EffectiveRegions(); len(regions) > 1 {
+		info.RegionUsage = fetchRegionUsage(account, regions)
+	}
+
 	return info, nil
+}
+
+// fetchRegionUsage queries getUsageLimits for each region concurrently and
+// extracts the main quota. Regions that error out are omitted from the result.
+func fetchRegionUsage(account *config.Account, regions []string) map[string]config.RegionQuota {
+	type regionResult struct {
+		region string
+		quota  config.RegionQuota
+		ok     bool
+	}
+	results := make([]regionResult, len(regions))
+	var wg sync.WaitGroup
+	for i, region := range regions {
+		wg.Add(1)
+		go func(idx int, region string) {
+			defer wg.Done()
+			usage, err := GetUsageLimitsForRegion(account, region)
+			if err != nil {
+				logger.Debugf("[RegionUsage] %s getUsageLimits failed for %s: %v", region, account.Email, err)
+				return
+			}
+			q := config.RegionQuota{}
+			if len(usage.UsageBreakdownList) > 0 {
+				b := usage.UsageBreakdownList[0]
+				q.UsageCurrent = b.CurrentUsage
+				q.UsageLimit = b.UsageLimit
+				if q.UsageLimit > 0 {
+					q.UsagePercent = q.UsageCurrent / q.UsageLimit
+				}
+			}
+			if usage.NextDateReset != "" {
+				if ts, err := usage.NextDateReset.Int64(); err == nil && ts > 0 {
+					q.NextResetDate = time.Unix(ts, 0).Format("2006-01-02")
+				} else if f, err := usage.NextDateReset.Float64(); err == nil && f > 0 {
+					q.NextResetDate = time.Unix(int64(f), 0).Format("2006-01-02")
+				}
+			}
+			results[idx] = regionResult{region: region, quota: q, ok: true}
+		}(i, region)
+	}
+	wg.Wait()
+
+	out := make(map[string]config.RegionQuota, len(regions))
+	for _, r := range results {
+		if r.ok {
+			out[r.region] = r.quota
+		}
+	}
+	return out
 }
 
 func parseSubscriptionType(raw string) string {

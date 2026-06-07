@@ -139,6 +139,10 @@ type Account struct {
 	NextResetDate string  `json:"nextResetDate,omitempty"` // Date when usage resets (YYYY-MM-DD)
 	LastRefresh   int64   `json:"lastRefresh,omitempty"`   // Last info refresh timestamp
 
+	// RegionUsage holds the independent main quota of each enabled region for
+	// multi-region (idc) accounts. Empty for single-region accounts.
+	RegionUsage map[string]RegionQuota `json:"regionUsage,omitempty"`
+
 	// Trial usage tracking
 	TrialUsageCurrent float64 `json:"trialUsageCurrent,omitempty"` // Trial quota current usage
 	TrialUsageLimit   float64 `json:"trialUsageLimit,omitempty"`   // Trial quota total limit
@@ -258,6 +262,16 @@ type Config struct {
 	TotalCredits    float64 `json:"totalCredits,omitempty"`    // Total credits consumed
 }
 
+// RegionQuota holds the main usage quota for a single region. Multi-region
+// (idc) accounts have an independent quota per region because each region's
+// profileArn is a distinct resource billed separately upstream.
+type RegionQuota struct {
+	UsageCurrent  float64 `json:"usageCurrent"`
+	UsageLimit    float64 `json:"usageLimit"`
+	UsagePercent  float64 `json:"usagePercent"`
+	NextResetDate string  `json:"nextResetDate,omitempty"`
+}
+
 // AccountInfo contains account metadata retrieved from Kiro API.
 // Used for updating subscription and usage information.
 type AccountInfo struct {
@@ -276,6 +290,9 @@ type AccountInfo struct {
 	TrialUsagePercent float64
 	TrialStatus       string
 	TrialExpiresAt    int64
+	// RegionUsage holds per-region main quota for multi-region accounts.
+	// nil/empty for single-region accounts (they use the flat Usage* fields).
+	RegionUsage map[string]RegionQuota
 }
 
 // Version current version
@@ -791,6 +808,7 @@ func UpdateAccountInfo(id string, info AccountInfo) error {
 			cfg.Accounts[i].TrialUsagePercent = info.TrialUsagePercent
 			cfg.Accounts[i].TrialStatus = info.TrialStatus
 			cfg.Accounts[i].TrialExpiresAt = info.TrialExpiresAt
+			cfg.Accounts[i].RegionUsage = info.RegionUsage
 			return Save()
 		}
 	}
