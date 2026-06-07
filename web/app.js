@@ -1612,6 +1612,51 @@
     if (d.success) toast(t('settings.endpointSaved'), 'success');
     else toast(t('common.saveFailed') + ': ' + (d.error || ''), 'error');
   }
+  let rateLimitTimer = null;
+  async function loadRateLimitQueue() {
+    const body = $('rateLimitQueueBody');
+    if (!body) return;
+    let d;
+    try {
+      const res = await api('/rate-limit/queue');
+      d = await res.json();
+    } catch (e) {
+      body.innerHTML = '<div class="muted">' + escapeHtml(t('settings.rateLimitError')) + '</div>';
+      return;
+    }
+    if (!d.enabled) {
+      body.innerHTML = '<div class="muted">' + escapeHtml(t('settings.rateLimitDisabled')) + '</div>';
+      return;
+    }
+    const buckets = d.buckets || [];
+    if (buckets.length === 0) {
+      body.innerHTML = '<div class="muted">' + escapeHtml(t('settings.rateLimitIdle')) + '</div>';
+      return;
+    }
+    const head = '<div class="muted" style="margin-bottom:8px">' +
+      escapeHtml(t('settings.rateLimitTotalWaiting', d.totalWaiting || 0)) + '</div>';
+    const rows = buckets.map(function (b) {
+      const label = (b.email || b.accountId || '?') + (b.region ? (' · ' + b.region) : '');
+      const tokens = (typeof b.tokens === 'number' ? b.tokens : 0).toFixed(1);
+      return '<div class="rl-row">' +
+        '<div class="rl-label">' + escapeHtml(label) + '</div>' +
+        '<div class="rl-stats">' +
+        '<span class="badge-meta">' + escapeHtml(t('settings.rateLimitWaiting', b.waiting || 0)) + '</span>' +
+        '<span class="badge-meta">' + escapeHtml(t('settings.rateLimitTokens', tokens, b.burst || 0)) + '</span>' +
+        '<span class="badge-meta">RPM ' + escapeHtml(String(b.rpm || 0)) + '</span>' +
+        '<span class="muted">' + escapeHtml(t('settings.rateLimitTotals', b.grantedTotal || 0, b.timeoutTotal || 0)) + '</span>' +
+        '</div></div>';
+    }).join('');
+    body.innerHTML = head + rows;
+  }
+  function startRateLimitPolling() {
+    stopRateLimitPolling();
+    loadRateLimitQueue();
+    rateLimitTimer = setInterval(loadRateLimitQueue, 3000);
+  }
+  function stopRateLimitPolling() {
+    if (rateLimitTimer) { clearInterval(rateLimitTimer); rateLimitTimer = null; }
+  }
   async function loadProxyConfig() {
     const res = await api('/proxy');
     const d = await res.json();
@@ -2734,6 +2779,9 @@
     qsa('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
     qsa('.tab-content').forEach(c => c.classList.add('hidden'));
     $('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.remove('hidden');
+    // Live-poll the rate-limit queue only while the settings tab is visible.
+    if (tab === 'settings') startRateLimitPolling();
+    else stopRateLimitPolling();
   }
 
   // Event wiring
@@ -2838,6 +2886,8 @@
     $('saveClientModeBtn').addEventListener('click', saveClientModeConfig);
     $('saveThinkingBtn').addEventListener('click', saveThinkingConfig);
     $('saveEndpointBtn').addEventListener('click', saveEndpointConfig);
+    const refreshRL = $('refreshRateLimitBtn');
+    if (refreshRL) refreshRL.addEventListener('click', loadRateLimitQueue);
     $('changePasswordBtn').addEventListener('click', changePassword);
     $('proxyType').addEventListener('change', onProxyTypeChange);
     $('saveProxyBtn').addEventListener('click', saveProxyConfig);

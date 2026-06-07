@@ -438,7 +438,15 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 	if rpm := config.GetOrgRPMLimit(); rpm > 0 && account != nil {
 		key := account.ID + ":" + dispatchRegion
 		maxWait := time.Duration(config.GetRateLimitMaxWaitMs()) * time.Millisecond
-		if !globalRateLimiter.Wait(key, rpm, maxWait) {
+		granted, waited, queueDepth := globalRateLimiter.WaitInfo(key, rpm, maxWait)
+		// Log only when the request actually queued (waited a meaningful amount
+		// or found peers ahead of it), so the backend log shows live contention
+		// without spamming a line per request under normal load.
+		if waited >= 50*time.Millisecond || queueDepth > 0 {
+			logger.Warnf("[RateLimit] Queued request: account=%s region=%s rpm=%d waitedMs=%d aheadInQueue=%d granted=%t",
+				account.Email, dispatchRegion, rpm, waited.Milliseconds(), queueDepth, granted)
+		}
+		if !granted {
 			logger.Warnf("[KiroAPI] Rate limit queue timeout: account=%s region=%s rpm=%d maxWaitMs=%d",
 				account.Email, dispatchRegion, rpm, config.GetRateLimitMaxWaitMs())
 			return fmt.Errorf("rate limit queue timeout for %s region=%s (rpm=%d): quota exhausted", account.Email, dispatchRegion, rpm)

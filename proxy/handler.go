@@ -2131,6 +2131,8 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiGetEndpointConfig(w, r)
 	case path == "/endpoint" && r.Method == "POST":
 		h.apiUpdateEndpointConfig(w, r)
+	case path == "/rate-limit/queue" && r.Method == "GET":
+		h.apiGetRateLimitQueue(w, r)
 	case path == "/proxy" && r.Method == "GET":
 		h.apiGetProxy(w, r)
 	case path == "/proxy" && r.Method == "POST":
@@ -3557,6 +3559,32 @@ func (h *Handler) apiUpdateEndpointConfig(w http.ResponseWriter, r *http.Request
 	}
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// apiGetRateLimitStatus 返回限速器实时排队快照，供后台监控面板使用。
+// 每个 bucket 对应一个「账号+区域」，展示当前排队数、剩余令牌、累计放行/超时数。
+func (h *Handler) apiGetRateLimitQueue(w http.ResponseWriter, r *http.Request) {
+	rpm := config.GetOrgRPMLimit()
+	stats := globalRateLimiter.Snapshot(rpm)
+
+	// Enrich each bucket with the account email for readability (key only carries ID).
+	emailByID := make(map[string]string)
+	for _, a := range config.GetAccounts() {
+		emailByID[a.ID] = a.Email
+	}
+	var totalWaiting int
+	for i := range stats {
+		stats[i].Email = emailByID[stats[i].AccountID]
+		totalWaiting += stats[i].Waiting
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"enabled":      rpm > 0,
+		"rpm":          rpm,
+		"maxWaitMs":    config.GetRateLimitMaxWaitMs(),
+		"totalWaiting": totalWaiting,
+		"buckets":      stats,
+	})
 }
 
 // applyProxyConfig 将代理配置应用到所有出站 HTTP 客户端（Kiro API + auth 模块）
