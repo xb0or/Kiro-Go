@@ -53,18 +53,36 @@ var kiroEndpoints = []kiroEndpoint{
 	},
 }
 
-// regionizeURL rewrites a us-east-1 endpoint URL to the account's region.
-// Only idc accounts with a non-empty, non-us-east-1 region are rewritten;
-// every other case returns the URL unchanged to avoid regressing the default path.
+// regionizeURL rewrites a us-east-1 endpoint URL to the account's single Region.
+// Only idc accounts are rewritten; every other case returns the URL unchanged.
+// This is the single-region entry point; multi-region dispatch uses regionizeURLTo
+// with an explicit target region.
 func regionizeURL(rawURL string, account *config.Account) string {
 	if account == nil || !strings.EqualFold(account.AuthMethod, "idc") {
 		return rawURL
 	}
-	region := strings.TrimSpace(account.Region)
+	return regionizeURLTo(rawURL, account.Region)
+}
+
+// regionizeURLTo rewrites the host of a us-east-1 endpoint URL to target region.
+// Only the host's region token is replaced (via url.Parse), so a "us-east-1"
+// appearing elsewhere — e.g. inside a profileArn query value — is never touched.
+// An empty or us-east-1 region returns the URL unchanged.
+func regionizeURLTo(rawURL, region string) string {
+	region = strings.TrimSpace(region)
 	if region == "" || region == "us-east-1" {
 		return rawURL
 	}
-	return strings.ReplaceAll(rawURL, ".us-east-1.", "."+region+".")
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return rawURL
+	}
+	newHost := strings.Replace(parsed.Host, ".us-east-1.", "."+region+".", 1)
+	if newHost == parsed.Host {
+		return rawURL
+	}
+	parsed.Host = newHost
+	return parsed.String()
 }
 
 // Global HTTP clients, swappable at runtime to apply proxy reconfiguration without restart.
@@ -73,6 +91,27 @@ var kiroRestHttpStore atomic.Pointer[http.Client]
 
 // proxyClientCache caches http.Client instances keyed by proxy URL for per-account proxy support.
 var proxyClientCache sync.Map
+
+// regionRoundRobin holds a per-account atomic counter (keyed by account ID) used
+// to rotate across an account's enabled regions on successive requests.
+var regionRoundRobin sync.Map
+
+// pickDispatchRegion selects the region for one request. Single-region accounts
+// always return their only region; multi-region accounts round-robin across the
+// enabled list so load is spread evenly. accountID keys the rotation counter so
+// concurrent accounts never share a cursor.
+func pickDispatchRegion(accountID string, regions []string) string {
+	if len(regions) == 0 {
+		return "us-east-1"
+	}
+	if len(regions) == 1 {
+		return regions[0]
+	}
+	ctrPtr, _ := regionRoundRobin.LoadOrStore(accountID, new(uint64))
+	ctr := ctrPtr.(*uint64)
+	n := atomic.AddUint64(ctr, 1) - 1
+	return regions[n%uint64(len(regions))]
+}
 
 func init() {
 	InitKiroHttpClient("")
@@ -364,7 +403,30 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 			payload.ProfileArn = originalProfileArn
 		}()
 	}
-	setPayloadProfileArnForAccount(payload, account)
+
+	// Pick the dispatch region for this request. Single-region accounts keep their
+	// only region; multi-region (idc) accounts round-robin across the enabled list.
+	// The chosen region drives BOTH the endpoint host and the profileArn so they
+	// stay paired — a us-east-1 profileArn sent to an eu-central-1 host fails.
+	dispatchRegion := "us-east-1"
+	if account != nil {
+		dispatchRegion = pickDispatchRegion(account.ID, account.EffectiveRegions())
+	}
+
+	// Inject the region-matched profileArn. For single-region accounts this is the
+	// cached account.ProfileArn; for multi-region accounts it is the profile bound
+	// to dispatchRegion (resolved/cached per region), never the single-region value.
+	if payload != nil {
+		if profileArn, err := ResolveProfileArnForRegion(account, dispatchRegion); err == nil && profileArn != "" {
+			payload.ProfileArn = profileArn
+		} else if err != nil {
+			accountEmail := "<nil>"
+			if account != nil {
+				accountEmail = account.Email
+			}
+			logger.Warnf("[ProfileArn] Failed to resolve profile ARN for %s region=%s: %v", accountEmail, dispatchRegion, err)
+		}
+	}
 
 	if _, err := json.Marshal(payload); err != nil {
 		return err
@@ -389,26 +451,14 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		callback = &wrapped
 	}
 
-	if payload != nil && strings.TrimSpace(payload.ProfileArn) == "" {
-		if profileArn, err := ResolveProfileArn(account); err == nil {
-			payload.ProfileArn = profileArn
-		} else {
-			accountEmail := "<nil>"
-			if account != nil {
-				accountEmail = account.Email
-			}
-			logger.Warnf("[ProfileArn] Failed to resolve profile ARN for %s: %v", accountEmail, err)
-		}
-	}
-
 	// Build endpoint list ordered by configuration.
 	endpoints := getSortedEndpoints(config.GetPreferredEndpoint())
 
 	var lastErr error
 	for _, ep := range endpoints {
-		// ep is a value copy; rewriting its URL to the account's region (idc only)
+		// ep is a value copy; rewriting its URL to the dispatch region (idc only)
 		// keeps the global kiroEndpoints slice untouched.
-		ep.URL = regionizeURL(ep.URL, account)
+		ep.URL = regionizeURLTo(ep.URL, dispatchRegion)
 
 		// Update user-message origin/envState for the selected account/client mode.
 		applyClientModeToPayloadForMode(payload, config.EffectiveClientMode(account))

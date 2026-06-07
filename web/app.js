@@ -1076,13 +1076,13 @@
       (String(a.authMethod || '').toLowerCase() === 'idc'
         ? '<div class="detail-item"><div class="detail-label">' + escapeHtml(t('detail.region')) + '</div>' +
           '<div class="detail-value machine-id-row">' +
-          '<input type="text" id="regionInput" list="regionOptions" value="' + escapeAttr(a.region || 'us-east-1') + '" placeholder="us-east-1" />' +
+          '<input type="text" id="regionInput" list="regionOptions" value="' + escapeAttr((Array.isArray(a.regions) && a.regions.length ? a.regions : [a.region || 'us-east-1']).join(', ')) + '" placeholder="us-east-1, eu-central-1" />' +
           '<datalist id="regionOptions">' +
           ['us-east-1', 'us-west-2', 'eu-central-1', 'eu-west-1', 'ap-southeast-1', 'ap-northeast-1']
             .map(function (r) { return '<option value="' + r + '"></option>'; }).join('') +
           '</datalist>' +
           '<button class="btn btn-sm btn-primary" data-detail-action="saveRegion" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
-          '</div></div>'
+          '</div><p class="help-block">' + escapeHtml(t('detail.regionMultiHint')) + '</p></div>'
         : detailItem(t('detail.region'), a.region || 'us-east-1')) +
       detailItem(t('detail.clientMode'), formatClientMode(a.effectiveClientMode || a.clientMode || 'kiro-ide')) +
       '</div></div>' +
@@ -1217,8 +1217,12 @@
     await putAccount(id, { weight }, t('detail.saved'));
   }
   async function saveRegion(id) {
-    const region = $('regionInput').value.trim();
-    await putAccount(id, { region }, t('detail.saved'));
+    const regions = $('regionInput').value.split(',').map(function (r) { return r.trim(); }).filter(Boolean);
+    if (regions.length <= 1) {
+      await putAccount(id, { region: regions[0] || 'us-east-1', regions: [] }, t('detail.saved'));
+    } else {
+      await putAccount(id, { region: regions[0], regions: regions }, t('detail.saved'));
+    }
   }
   function renderOverageBadge(a) {
     const status = (a.overageStatus || '').toUpperCase();

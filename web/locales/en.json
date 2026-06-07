@@ -150,6 +150,7 @@
   "detail.userId": "User ID",
   "detail.authMethod": "Auth Method",
   "detail.region": "Region",
+  "detail.regionMultiHint": "Enterprise (idc) only. Enter one or more regions, comma-separated, for round-robin load balancing (e.g. us-east-1, eu-central-1). Each region uses its own profile and quota.",
   "detail.machineId": "Machine ID",
   "detail.generate": "Generate",
   "detail.subscription": "Subscription",

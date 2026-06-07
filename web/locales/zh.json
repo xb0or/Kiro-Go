@@ -150,6 +150,7 @@
   "detail.userId": "用户ID",
   "detail.authMethod": "认证方式",
   "detail.region": "Region",
+  "detail.regionMultiHint": "仅企业认证（idc）账号。可填一个或多个 region，用逗号分隔，多个时轮询负载均衡（如 us-east-1, eu-central-1）。每个 region 使用各自的 profile 和配额。",
   "detail.machineId": "机器码",
   "detail.generate": "生成",
   "detail.subscription": "订阅信息",

@@ -149,6 +149,88 @@ func ResolveProfileArn(account *config.Account) (string, error) {
 	return "", fmt.Errorf("no available Kiro profile")
 }
 
+// ResolveProfileArnForRegion returns the account's profileArn for a specific
+// region, fetching and caching it on first use. A profileArn is region-bound,
+// so multi-region dispatch must pair each endpoint host with the matching
+// region's profileArn — using a us-east-1 arn against eu-central-1 fails
+// (the previous single-arn bug). The result is cached in RegionProfiles[region].
+func ResolveProfileArnForRegion(account *config.Account, region string) (string, error) {
+	if account == nil {
+		return "", fmt.Errorf("account is nil")
+	}
+	region = strings.TrimSpace(region)
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	// Cache hit.
+	if arn, ok := account.RegionProfiles[region]; ok {
+		if arn = strings.TrimSpace(arn); arn != "" {
+			return arn, nil
+		}
+	}
+	// The single-region ProfileArn is the us-east-1 arn for legacy accounts.
+	if region == "us-east-1" {
+		if arn := strings.TrimSpace(account.ProfileArn); arn != "" {
+			return arn, nil
+		}
+	}
+
+	arn, err := listAvailableProfilesForRegion(account, region)
+	if err != nil || arn == "" {
+		if err == nil {
+			err = fmt.Errorf("no available Kiro profile in %s", region)
+		}
+		return "", err
+	}
+	if updateErr := config.UpdateAccountRegionProfile(account.ID, region, arn); updateErr != nil {
+		logger.Warnf("[ProfileArn] Failed to cache %s profile ARN for %s: %v", region, account.Email, updateErr)
+	}
+	if account.RegionProfiles == nil {
+		account.RegionProfiles = map[string]string{}
+	}
+	account.RegionProfiles[region] = arn
+	return arn, nil
+}
+
+// listAvailableProfilesForRegion calls ListAvailableProfiles against an explicit
+// region's endpoint (host rewritten via regionizeURLTo, independent of account.Region).
+func listAvailableProfilesForRegion(account *config.Account, region string) (string, error) {
+	endpoint := regionizeURLTo(kiroRestAPIBase, region)
+	req, err := http.NewRequest("POST", endpoint+"/ListAvailableProfiles", strings.NewReader(`{"maxResults":10}`))
+	if err != nil {
+		return "", err
+	}
+	setKiroHeaders(req, account)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := GetRestClientForProxy(ResolveAccountProxyURL(account)).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Profiles []struct {
+			Arn string `json:"arn"`
+		} `json:"profiles"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	for _, profile := range result.Profiles {
+		if arn := strings.TrimSpace(profile.Arn); arn != "" {
+			return arn, nil
+		}
+	}
+	return "", fmt.Errorf("empty profile list")
+}
+
 func listAvailableProfilesWithRetry(account *config.Account) (string, error) {
 	// Retry transient failures (network errors, 5xx, 429) with short backoff.
 	// An empty profile list or 4xx (other than 429) is treated as authoritative

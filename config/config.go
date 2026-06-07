@@ -87,6 +87,14 @@ type Account struct {
 	MachineId    string `json:"machineId,omitempty"`    // UUID machine identifier for request tracking
 	ProfileArn   string `json:"profileArn,omitempty"`   // CodeWhisperer/Kiro profile ARN for generation requests
 
+	// Multi-region support for enterprise (idc) accounts.
+	// Regions lists the enabled regions for round-robin/load-balanced dispatch.
+	// RegionProfiles caches each region's own profileArn (region -> arn), because
+	// a profileArn is a region-bound resource and must be paired with the matching
+	// endpoint host. Empty Regions falls back to single-region behavior using Region/ProfileArn.
+	Regions        []string          `json:"regions,omitempty"`        // Enabled regions for multi-region dispatch (idc only)
+	RegionProfiles map[string]string `json:"regionProfiles,omitempty"` // region -> profileArn cache
+
 	// Per-account outbound proxy (falls back to global ProxyURL if empty)
 	ProxyURL string `json:"proxyURL,omitempty"`
 
@@ -305,6 +313,39 @@ func EffectiveClientMode(account *Account) ClientMode {
 		return account.ClientMode.Normalize()
 	}
 	return effectiveGlobalClientModeLocked()
+}
+
+// EffectiveRegions returns the regions an account dispatches across.
+// Multi-region accounts (idc with a non-empty Regions list) use that list;
+// every other account falls back to its single Region (or us-east-1).
+// The result is always non-empty and deduplicated, preserving order.
+func (a *Account) EffectiveRegions() []string {
+	if a == nil {
+		return []string{"us-east-1"}
+	}
+	var src []string
+	if strings.EqualFold(a.AuthMethod, "idc") && len(a.Regions) > 0 {
+		src = a.Regions
+	} else {
+		src = []string{a.Region}
+	}
+	seen := make(map[string]struct{}, len(src))
+	out := make([]string, 0, len(src))
+	for _, r := range src {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			r = "us-east-1"
+		}
+		if _, dup := seen[r]; dup {
+			continue
+		}
+		seen[r] = struct{}{}
+		out = append(out, r)
+	}
+	if len(out) == 0 {
+		out = append(out, "us-east-1")
+	}
+	return out
 }
 
 // GetClientMode returns the global client simulation mode.
@@ -596,6 +637,29 @@ func UpdateAccountProfileArn(id, profileArn string) error {
 	for i, a := range cfg.Accounts {
 		if a.ID == id {
 			cfg.Accounts[i].ProfileArn = profileArn
+			return Save()
+		}
+	}
+	return nil
+}
+
+// UpdateAccountRegionProfile caches the profileArn resolved for a specific
+// region (region -> arn), used by multi-region dispatch. The profileArn is a
+// region-bound resource, so each region keeps its own.
+func UpdateAccountRegionProfile(id, region, profileArn string) error {
+	region = strings.TrimSpace(region)
+	profileArn = strings.TrimSpace(profileArn)
+	if region == "" || profileArn == "" {
+		return nil
+	}
+	cfgLock.Lock()
+	defer cfgLock.Unlock()
+	for i, a := range cfg.Accounts {
+		if a.ID == id {
+			if cfg.Accounts[i].RegionProfiles == nil {
+				cfg.Accounts[i].RegionProfiles = make(map[string]string)
+			}
+			cfg.Accounts[i].RegionProfiles[region] = profileArn
 			return Save()
 		}
 	}

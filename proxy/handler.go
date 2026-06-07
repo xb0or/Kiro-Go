@@ -2183,6 +2183,7 @@ func (h *Handler) apiGetAccounts(w http.ResponseWriter, r *http.Request) {
 			"authMethod":          a.AuthMethod,
 			"provider":            a.Provider,
 			"region":              a.Region,
+			"regions":             a.Regions,
 			"enabled":             a.Enabled,
 			"banStatus":           a.BanStatus,
 			"banReason":           a.BanReason,
@@ -2332,6 +2333,32 @@ func (h *Handler) apiUpdateAccount(w http.ResponseWriter, r *http.Request, id st
 			region = "us-east-1"
 		}
 		existing.Region = region
+	}
+	if v, ok := updates["regions"].([]interface{}); ok {
+		// regions 多区域负载均衡，仅企业认证（idc）账号可设：每个 region 的 profileArn
+		// 是区域绑定资源，转发时 host 与 profileArn 必须配套（见 ResolveProfileArnForRegion）。
+		if !strings.EqualFold(existing.AuthMethod, "idc") {
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": "regions can only be set for enterprise (idc) accounts"})
+			return
+		}
+		seen := make(map[string]struct{}, len(v))
+		regions := make([]string, 0, len(v))
+		for _, item := range v {
+			r, _ := item.(string)
+			r = strings.TrimSpace(r)
+			if r == "" {
+				continue
+			}
+			if _, dup := seen[r]; dup {
+				continue
+			}
+			seen[r] = struct{}{}
+			regions = append(regions, r)
+		}
+		existing.Regions = regions
+		// region 列表变更后，旧的 region->profileArn 缓存可能失效，清空以强制按新列表重新解析。
+		existing.RegionProfiles = nil
 	}
 
 	if err := config.UpdateAccount(id, *existing); err != nil {
@@ -3276,6 +3303,8 @@ func (h *Handler) apiGetAccountFull(w http.ResponseWriter, r *http.Request, id s
 		"authMethod":          account.AuthMethod,
 		"provider":            account.Provider,
 		"region":              account.Region,
+		"regions":             account.Regions,
+		"regionProfiles":      account.RegionProfiles,
 		"expiresAt":           account.ExpiresAt,
 		"machineId":           account.MachineId,
 		"clientMode":          account.ClientMode,
