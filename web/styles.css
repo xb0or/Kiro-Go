@@ -2425,15 +2425,51 @@ img.brand-icon {
   font-weight: 500;
   word-break: break-all;
 }
-.machine-id-row {
+/* Detail modal editable field: control row + helper text, uniform rhythm */
+.detail-field {
   display: flex;
-  gap: 0.75rem;
-  align-items: stretch;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.detail-field-control {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
   flex-wrap: wrap;
 }
-.machine-id-row input {
-  flex: 1;
-  min-width: 12rem;
+.detail-field-control > input,
+.detail-field-control > select {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.detail-field-control > input[type="number"] {
+  flex: 0 0 7rem;
+}
+.detail-field-control .btn {
+  flex: 0 0 auto;
+}
+.detail-help {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+  margin: 0;
+}
+.detail-help.is-success {
+  color: var(--success, #16a34a);
+}
+.detail-help.is-error {
+  color: var(--destructive);
+}
+.detail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.detail-section-head h4 {
+  margin: 0;
 }
 .model-list {
   display: flex;
@@ -3073,9 +3109,6 @@ img.brand-icon {
   max-height: 12.5rem;
   overflow-y: auto;
   line-height: 1.6;
-}
-.machine-id-row + .help-block {
-  margin-top: 0.75rem;
 }
 .input-row {
   display: flex;

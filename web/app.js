@@ -1090,14 +1090,20 @@
     const a = accountsData.find(x => x.id === id);
     if (!a) return;
     const idAttr = escapeAttr(id);
+    const isIdc = String(a.authMethod || '').toLowerCase() === 'idc';
     $('detailBody').innerHTML =
       '<div class="detail-section"><h4>' + escapeHtml(t('detail.basicInfo')) + '</h4><div class="detail-grid">' +
       detailItem(t('detail.email'), getDisplayEmail(a.email, null)) +
       detailItem(t('detail.userId'), a.userId || '-') +
       detailItem(t('detail.authMethod'), formatAuthMethod(a.provider || a.authMethod)) +
-      (String(a.authMethod || '').toLowerCase() === 'idc'
-        ? '<div class="detail-item"><div class="detail-label">' + escapeHtml(t('detail.region')) + '</div>' +
-          '<div class="detail-value machine-id-row">' +
+      (isIdc ? '' : detailItem(t('detail.region'), a.region || 'us-east-1')) +
+      detailItem(t('detail.clientMode'), formatClientMode(a.effectiveClientMode || a.clientMode || 'kiro-ide')) +
+      '</div></div>' +
+
+      (isIdc
+        ? '<div class="detail-section"><h4>' + escapeHtml(t('detail.region')) + '</h4>' +
+          '<div class="detail-field">' +
+          '<div class="detail-field-control">' +
           '<input type="text" id="regionInput" list="regionOptions" value="' + escapeAttr((Array.isArray(a.regions) && a.regions.length ? a.regions : [a.region || 'us-east-1']).join(', ')) + '" placeholder="us-east-1, eu-central-1" />' +
           '<datalist id="regionOptions">' +
           ['us-east-1', 'us-west-2', 'eu-central-1', 'eu-west-1', 'ap-southeast-1', 'ap-northeast-1']
@@ -1105,47 +1111,59 @@
           '</datalist>' +
           '<button class="btn btn-sm btn-outline" data-detail-action="discoverRegions" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.regionDiscover')) + '</button>' +
           '<button class="btn btn-sm btn-primary" data-detail-action="saveRegion" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
-          '</div><p class="help-block">' + escapeHtml(t('detail.regionMultiHint')) + '</p>' +
-          '<p class="help-block" id="regionDiscoverStatus"></p></div>'
-        : detailItem(t('detail.region'), a.region || 'us-east-1')) +
-      detailItem(t('detail.clientMode'), formatClientMode(a.effectiveClientMode || a.clientMode || 'kiro-ide')) +
-      '</div></div>' +
+          '</div>' +
+          '<p class="detail-help">' + escapeHtml(t('detail.regionMultiHint')) + '</p>' +
+          '<p class="detail-help" id="regionDiscoverStatus" hidden></p>' +
+          '</div></div>'
+        : '') +
 
-      '<div class="detail-section"><h4>' + escapeHtml(t('detail.clientMode')) + '</h4><div class="machine-id-row">' +
+      '<div class="detail-section"><h4>' + escapeHtml(t('detail.clientMode')) + '</h4>' +
+      '<div class="detail-field">' +
+      '<div class="detail-field-control">' +
       '<select id="accountClientModeInput">' +
       '<option value="">' + escapeHtml(t('detail.clientModeDefault')) + '</option>' +
       '<option value="kiro-ide">' + escapeHtml(t('settings.clientModeKiroIde')) + '</option>' +
       '<option value="kiro-cli">' + escapeHtml(t('settings.clientModeKiroCli')) + '</option>' +
       '</select>' +
       '<button class="btn btn-sm btn-primary" data-detail-action="saveClientMode" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
-      '</div><p class="help-block">' + escapeHtml(t('detail.clientModeHint')) + '</p></div>' +
+      '</div>' +
+      '<p class="detail-help">' + escapeHtml(t('detail.clientModeHint')) + '</p>' +
+      '</div></div>' +
 
-      '<div class="detail-section"><h4>' + escapeHtml(t('detail.machineId')) + '</h4><div class="machine-id-row">' +
+      '<div class="detail-section"><h4>' + escapeHtml(t('detail.machineId')) + '</h4>' +
+      '<div class="detail-field">' +
+      '<div class="detail-field-control">' +
       '<input type="text" id="machineIdInput" value="' + escapeAttr(a.machineId || '') + '" placeholder="UUID" />' +
       '<button class="btn btn-sm btn-outline" id="generateMachineIdBtn" type="button">' + escapeHtml(t('detail.generate')) + '</button>' +
       '<button class="btn btn-sm btn-primary" data-detail-action="saveMachineId" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
+      '</div>' +
       '</div></div>' +
 
       '<div class="detail-section"><h4>' + escapeHtml(t('detail.weight')) + '</h4>' +
-      '<div class="form-group">' +
+      '<div class="detail-field">' +
+      '<div class="detail-field-control">' +
       '<input type="number" id="weightInput" value="' + (a.weight || 0) + '" min="0" max="10" />' +
-      '<small>' + escapeHtml(t('detail.weightHint')) + '</small>' +
-      '</div>' +
       '<button class="btn btn-sm btn-primary" data-detail-action="saveWeight" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
       '</div>' +
+      '<p class="detail-help">' + escapeHtml(t('detail.weightHint')) + '</p>' +
+      '</div></div>' +
 
       '<div class="detail-section">' +
-      '<h4>' + escapeHtml(t('detail.overage')) +
-      ' <button class="btn btn-sm btn-outline" data-detail-action="refreshOverage" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.overageRefresh')) + '</button>' +
-      '</h4>' +
-      '<p class="help-block">' + escapeHtml(t('detail.overageHint')) + '</p>' +
+      '<div class="detail-section-head"><h4>' + escapeHtml(t('detail.overage')) + '</h4>' +
+      '<button class="btn btn-sm btn-outline" data-detail-action="refreshOverage" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.overageRefresh')) + '</button>' +
+      '</div>' +
+      '<p class="detail-help">' + escapeHtml(t('detail.overageHint')) + '</p>' +
       renderOverageBlock(a, idAttr) +
       '</div>' +
 
-      '<div class="detail-section"><h4>' + escapeHtml(t('detail.proxyURL')) + '</h4><div class="machine-id-row">' +
+      '<div class="detail-section"><h4>' + escapeHtml(t('detail.proxyURL')) + '</h4>' +
+      '<div class="detail-field">' +
+      '<div class="detail-field-control">' +
       '<input type="text" id="proxyURLInput" value="' + escapeAttr(a.proxyURL || '') + '" placeholder="socks5://host:port" />' +
       '<button class="btn btn-sm btn-primary" data-detail-action="saveProxyURL" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
-      '</div><p class="help-block">' + escapeHtml(t('detail.proxyHint')) + '</p></div>' +
+      '</div>' +
+      '<p class="detail-help">' + escapeHtml(t('detail.proxyHint')) + '</p>' +
+      '</div></div>' +
 
       '<div class="detail-section"><h4>' + escapeHtml(t('detail.subscription')) + '</h4><div class="detail-grid">' +
       detailItem(t('detail.subscriptionType'), a.subscriptionTitle || (a.subscriptionType ? formatSubscriptionLabel(a.subscriptionType) : '-')) +
@@ -1254,11 +1272,18 @@
       await putAccount(id, { region: regions[0], regions: regions }, t('detail.saved'));
     }
   }
+  function setRegionDiscoverStatus(el, text, state) {
+    if (!el) return;
+    el.textContent = text;
+    el.hidden = !text;
+    el.classList.remove('is-loading', 'is-success', 'is-empty', 'is-error');
+    if (state) el.classList.add('is-' + state);
+  }
   async function discoverRegions(id) {
     const statusEl = $('regionDiscoverStatus');
     const btn = document.querySelector('[data-detail-action="discoverRegions"][data-id="' + escapeAttr(id) + '"]');
     if (btn) btn.disabled = true;
-    if (statusEl) statusEl.textContent = t('detail.regionDiscovering');
+    setRegionDiscoverStatus(statusEl, t('detail.regionDiscovering'), 'loading');
     try {
       const res = await api('/accounts/' + id + '/regions/discover', { method: 'POST' });
       const d = await res.json();
@@ -1268,13 +1293,13 @@
       if (dl) {
         dl.innerHTML = available.map(function (r) { return '<option value="' + escapeAttr(r) + '"></option>'; }).join('');
       }
-      if (statusEl) {
-        statusEl.textContent = available.length
-          ? t('detail.regionDiscoverFound').replace('{regions}', available.join(', '))
-          : t('detail.regionDiscoverNone');
+      if (available.length) {
+        setRegionDiscoverStatus(statusEl, t('detail.regionDiscoverFound').replace('{regions}', available.join(', ')), 'success');
+      } else {
+        setRegionDiscoverStatus(statusEl, t('detail.regionDiscoverNone'), 'empty');
       }
     } catch (e) {
-      if (statusEl) statusEl.textContent = (e && e.message) ? e.message : String(e);
+      setRegionDiscoverStatus(statusEl, (e && e.message) ? e.message : String(e), 'error');
     } finally {
       if (btn) btn.disabled = false;
     }
