@@ -10,12 +10,26 @@ import (
 	"net/http"
 	neturl "net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
 	kiroRestAPIBase = "https://codewhisperer.us-east-1.amazonaws.com"
 )
+
+// candidateRegions is the fixed set of regions probed when discovering which
+// regions an account can actually use. The upstream has no "list all regions"
+// API — the Kiro client probes each candidate's ListAvailableProfiles and treats
+// any region that returns a profileArn as available. This mirrors that behavior.
+var candidateRegions = []string{
+	"us-east-1",
+	"us-west-2",
+	"eu-central-1",
+	"eu-west-1",
+	"ap-southeast-1",
+	"ap-northeast-1",
+}
 
 // GetUsageLimits 获取账户使用量和订阅信息
 func GetUsageLimits(account *config.Account) (*UsageLimitsResponse, error) {
@@ -229,6 +243,55 @@ func listAvailableProfilesForRegion(account *config.Account, region string) (str
 		}
 	}
 	return "", fmt.Errorf("empty profile list")
+}
+
+// RegionProbeResult reports whether a single candidate region is usable by an
+// account, plus the resolved profileArn (when available) and any probe error.
+type RegionProbeResult struct {
+	Region     string `json:"region"`
+	Available  bool   `json:"available"`
+	ProfileArn string `json:"profileArn,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// DiscoverAvailableRegions probes each candidate region's ListAvailableProfiles
+// concurrently and reports which regions the account can actually use. A region
+// is "available" when it returns a profileArn; that arn is cached into
+// RegionProfiles so a later dispatch to the region skips the lookup. Results are
+// returned in candidateRegions order regardless of probe completion order.
+func DiscoverAvailableRegions(account *config.Account) ([]RegionProbeResult, error) {
+	if account == nil {
+		return nil, fmt.Errorf("account is nil")
+	}
+
+	results := make([]RegionProbeResult, len(candidateRegions))
+	var wg sync.WaitGroup
+	for i, region := range candidateRegions {
+		wg.Add(1)
+		go func(idx int, region string) {
+			defer wg.Done()
+			res := RegionProbeResult{Region: region}
+			arn, err := listAvailableProfilesForRegion(account, region)
+			if err != nil {
+				res.Error = err.Error()
+			} else if arn != "" {
+				res.Available = true
+				res.ProfileArn = arn
+			}
+			results[idx] = res
+		}(i, region)
+	}
+	wg.Wait()
+
+	// Cache resolved arns so subsequent dispatch reuses them.
+	for _, res := range results {
+		if res.Available && res.ProfileArn != "" {
+			if updateErr := config.UpdateAccountRegionProfile(account.ID, res.Region, res.ProfileArn); updateErr != nil {
+				logger.Warnf("[RegionProbe] Failed to cache %s profile ARN for %s: %v", res.Region, account.Email, updateErr)
+			}
+		}
+	}
+	return results, nil
 }
 
 func listAvailableProfilesWithRetry(account *config.Account) (string, error) {

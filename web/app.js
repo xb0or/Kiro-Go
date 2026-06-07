@@ -1081,8 +1081,10 @@
           ['us-east-1', 'us-west-2', 'eu-central-1', 'eu-west-1', 'ap-southeast-1', 'ap-northeast-1']
             .map(function (r) { return '<option value="' + r + '"></option>'; }).join('') +
           '</datalist>' +
+          '<button class="btn btn-sm btn-outline" data-detail-action="discoverRegions" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.regionDiscover')) + '</button>' +
           '<button class="btn btn-sm btn-primary" data-detail-action="saveRegion" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
-          '</div><p class="help-block">' + escapeHtml(t('detail.regionMultiHint')) + '</p></div>'
+          '</div><p class="help-block">' + escapeHtml(t('detail.regionMultiHint')) + '</p>' +
+          '<p class="help-block" id="regionDiscoverStatus"></p></div>'
         : detailItem(t('detail.region'), a.region || 'us-east-1')) +
       detailItem(t('detail.clientMode'), formatClientMode(a.effectiveClientMode || a.clientMode || 'kiro-ide')) +
       '</div></div>' +
@@ -1222,6 +1224,31 @@
       await putAccount(id, { region: regions[0] || 'us-east-1', regions: [] }, t('detail.saved'));
     } else {
       await putAccount(id, { region: regions[0], regions: regions }, t('detail.saved'));
+    }
+  }
+  async function discoverRegions(id) {
+    const statusEl = $('regionDiscoverStatus');
+    const btn = document.querySelector('[data-detail-action="discoverRegions"][data-id="' + escapeAttr(id) + '"]');
+    if (btn) btn.disabled = true;
+    if (statusEl) statusEl.textContent = t('detail.regionDiscovering');
+    try {
+      const res = await api('/accounts/' + id + '/regions/discover', { method: 'POST' });
+      const d = await res.json();
+      if (!res.ok || !d.success) throw new Error(d.error || ('HTTP ' + res.status));
+      const available = Array.isArray(d.available) ? d.available : [];
+      const dl = $('regionOptions');
+      if (dl) {
+        dl.innerHTML = available.map(function (r) { return '<option value="' + escapeAttr(r) + '"></option>'; }).join('');
+      }
+      if (statusEl) {
+        statusEl.textContent = available.length
+          ? t('detail.regionDiscoverFound').replace('{regions}', available.join(', '))
+          : t('detail.regionDiscoverNone');
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = (e && e.message) ? e.message : String(e);
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
   function renderOverageBadge(a) {
@@ -2785,6 +2812,7 @@
       if (a === 'saveMachineId') saveMachineId(id);
       else if (a === 'saveWeight') saveWeight(id);
       else if (a === 'saveRegion') saveRegion(id);
+      else if (a === 'discoverRegions') discoverRegions(id);
       else if (a === 'toggleOverage') toggleOverageSwitch(id, b);
       else if (a === 'refreshOverage') refreshAccountOverage(id);
       else if (a === 'saveProxyURL') saveProxyURL(id);

@@ -2089,6 +2089,9 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/accounts/"), "/overage")
 		h.apiGetAccountOverage(w, r, id)
 
+	case strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/regions/discover") && r.Method == "POST":
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/accounts/"), "/regions/discover")
+		h.apiDiscoverAccountRegions(w, r, id)
 	case strings.HasPrefix(path, "/accounts/") && strings.HasSuffix(path, "/full") && r.Method == "GET":
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/accounts/"), "/full")
 		h.apiGetAccountFull(w, r, id)
@@ -3258,6 +3261,48 @@ func (h *Handler) apiRefreshAccount(w http.ResponseWriter, r *http.Request, id s
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"info":    info,
+	})
+}
+
+// apiDiscoverAccountRegions 探测账号实际可用的 region。上游无「列出全部 region」
+// 接口，只能对候选 region 逐个调 ListAvailableProfiles，能返回 profileArn 的即可用。
+func (h *Handler) apiDiscoverAccountRegions(w http.ResponseWriter, r *http.Request, id string) {
+	accounts := config.GetAccounts()
+	var account *config.Account
+	for i := range accounts {
+		if accounts[i].ID == id {
+			account = &accounts[i]
+			break
+		}
+	}
+	if account == nil {
+		w.WriteHeader(404)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Account not found"})
+		return
+	}
+	if !strings.EqualFold(account.AuthMethod, "idc") {
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Region discovery is only available for idc accounts"})
+		return
+	}
+
+	results, err := DiscoverAvailableRegions(account)
+	if err != nil {
+		w.WriteHeader(500)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	available := make([]string, 0, len(results))
+	for _, res := range results {
+		if res.Available {
+			available = append(available, res.Region)
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":   true,
+		"available": available,
+		"results":   results,
 	})
 }
 
