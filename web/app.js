@@ -1073,7 +1073,13 @@
       detailItem(t('detail.email'), getDisplayEmail(a.email, null)) +
       detailItem(t('detail.userId'), a.userId || '-') +
       detailItem(t('detail.authMethod'), formatAuthMethod(a.provider || a.authMethod)) +
-      detailItem(t('detail.region'), a.region || 'us-east-1') +
+      (String(a.authMethod || '').toLowerCase() === 'idc'
+        ? '<div class="detail-item"><div class="detail-label">' + escapeHtml(t('detail.region')) + '</div>' +
+          '<div class="detail-value machine-id-row">' +
+          '<input type="text" id="regionInput" value="' + escapeAttr(a.region || 'us-east-1') + '" placeholder="us-east-1" />' +
+          '<button class="btn btn-sm btn-primary" data-detail-action="saveRegion" data-id="' + idAttr + '" type="button">' + escapeHtml(t('detail.save')) + '</button>' +
+          '</div></div>'
+        : detailItem(t('detail.region'), a.region || 'us-east-1')) +
       detailItem(t('detail.clientMode'), formatClientMode(a.effectiveClientMode || a.clientMode || 'kiro-ide')) +
       '</div></div>' +
 
@@ -1205,6 +1211,10 @@
   async function saveWeight(id) {
     const weight = parseInt($('weightInput').value, 10) || 0;
     await putAccount(id, { weight }, t('detail.saved'));
+  }
+  async function saveRegion(id) {
+    const region = $('regionInput').value.trim();
+    await putAccount(id, { region }, t('detail.saved'));
   }
   function renderOverageBadge(a) {
     const status = (a.overageStatus || '').toUpperCase();
@@ -2766,6 +2776,7 @@
       const a = b.dataset.detailAction;
       if (a === 'saveMachineId') saveMachineId(id);
       else if (a === 'saveWeight') saveWeight(id);
+      else if (a === 'saveRegion') saveRegion(id);
       else if (a === 'toggleOverage') toggleOverageSwitch(id, b);
       else if (a === 'refreshOverage') refreshAccountOverage(id);
       else if (a === 'saveProxyURL') saveProxyURL(id);

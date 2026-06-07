@@ -2319,6 +2319,20 @@ func (h *Handler) apiUpdateAccount(w http.ResponseWriter, r *http.Request, id st
 			return
 		}
 	}
+	if v, ok := updates["region"].(string); ok {
+		// region 仅对企业认证（idc）账号生效：它会改写上游 endpoint 的区域。
+		// 其他账号类型上游恒为 us-east-1，放开会让 OIDC 刷新 URL 漂移到无效区域。
+		if !strings.EqualFold(existing.AuthMethod, "idc") {
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": "region can only be set for enterprise (idc) accounts"})
+			return
+		}
+		region := strings.TrimSpace(v)
+		if region == "" {
+			region = "us-east-1"
+		}
+		existing.Region = region
+	}
 
 	if err := config.UpdateAccount(id, *existing); err != nil {
 		w.WriteHeader(500)

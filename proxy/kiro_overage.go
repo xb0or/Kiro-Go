@@ -53,7 +53,7 @@ func FetchOverageStatus(account *config.Account) (*OverageSnapshot, error) {
 		return nil, fmt.Errorf("account is nil")
 	}
 
-	rawURL := kiroQAPIBase + "/getUsageLimits?origin=" + config.GetOrigin(account) + "&resourceType=AGENTIC_REQUEST&isEmailRequired=true"
+	rawURL := regionizeURL(kiroQAPIBase, account) + "/getUsageLimits?origin=" + config.GetOrigin(account) + "&resourceType=AGENTIC_REQUEST&isEmailRequired=true"
 	if profileArn := strings.TrimSpace(account.ProfileArn); profileArn != "" {
 		rawURL += "&profileArn=" + neturl.QueryEscape(profileArn)
 	}
@@ -132,7 +132,7 @@ func SetOverageStatus(account *config.Account, enabled bool) (*OverageSnapshot, 
 	}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequest("POST", kiroQAPIBase+"/setUserPreference", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", regionizeURL(kiroQAPIBase, account)+"/setUserPreference", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

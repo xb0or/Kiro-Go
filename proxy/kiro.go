@@ -53,6 +53,20 @@ var kiroEndpoints = []kiroEndpoint{
 	},
 }
 
+// regionizeURL rewrites a us-east-1 endpoint URL to the account's region.
+// Only idc accounts with a non-empty, non-us-east-1 region are rewritten;
+// every other case returns the URL unchanged to avoid regressing the default path.
+func regionizeURL(rawURL string, account *config.Account) string {
+	if account == nil || !strings.EqualFold(account.AuthMethod, "idc") {
+		return rawURL
+	}
+	region := strings.TrimSpace(account.Region)
+	if region == "" || region == "us-east-1" {
+		return rawURL
+	}
+	return strings.ReplaceAll(rawURL, ".us-east-1.", "."+region+".")
+}
+
 // Global HTTP clients, swappable at runtime to apply proxy reconfiguration without restart.
 var kiroHttpStore atomic.Pointer[http.Client]
 var kiroRestHttpStore atomic.Pointer[http.Client]
@@ -392,6 +406,10 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 
 	var lastErr error
 	for _, ep := range endpoints {
+		// ep is a value copy; rewriting its URL to the account's region (idc only)
+		// keeps the global kiroEndpoints slice untouched.
+		ep.URL = regionizeURL(ep.URL, account)
+
 		// Update user-message origin/envState for the selected account/client mode.
 		applyClientModeToPayloadForMode(payload, config.EffectiveClientMode(account))
 
