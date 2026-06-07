@@ -261,11 +261,12 @@ func (h *Handler) refreshAllAccounts() {
 	accounts := config.GetAccounts()
 	for i := range accounts {
 		account := &accounts[i]
-		if !account.Enabled || account.AccessToken == "" {
+		if account.AccessToken == "" {
 			continue
 		}
 
-		// 检查 token 是否需要刷新
+		// 检查 token 是否需要刷新。
+		// 即使账号已被禁用也保持 token 刷新，避免令牌过期，便于重新启用时立即可用。
 		if account.ExpiresAt > 0 && time.Now().Unix() > account.ExpiresAt-tokenRefreshSkewSeconds {
 			newAccessToken, newRefreshToken, newExpiresAt, profileArn, err := auth.RefreshToken(account)
 			if err != nil {
@@ -284,6 +285,11 @@ func (h *Handler) refreshAllAccounts() {
 				account.ProfileArn = profileArn
 				config.UpdateAccountProfileArn(account.ID, profileArn)
 			}
+		}
+
+		// 禁用账号仅保活 token，不再拉取账户信息（使用量/封禁状态等）。
+		if !account.Enabled {
+			continue
 		}
 
 		// 刷新账户信息
@@ -2557,6 +2563,11 @@ func (h *Handler) apiBatchAccounts(w http.ResponseWriter, r *http.Request) {
 					h.pool.UpdateToken(id, newAccess, newRefresh, newExpires)
 				}
 			}
+			// 禁用账号仅保活 token，不再拉取账户信息（使用量/封禁状态等）。
+			if !account.Enabled {
+				successCount++
+				continue
+			}
 			// 刷新账户信息
 			info, err := RefreshAccountInfo(account)
 			if err != nil {
@@ -3210,6 +3221,15 @@ func (h *Handler) apiRefreshAccount(w http.ResponseWriter, r *http.Request, id s
 			json.NewEncoder(w).Encode(map[string]string{"error": "Token refresh failed: " + err.Error()})
 			return
 		}
+	}
+
+	// 禁用账号仅保活 token，不再拉取账户信息（使用量/封禁状态等）。
+	if !account.Enabled {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Token refreshed (account disabled)",
+		})
+		return
 	}
 
 	// 获取账户信息
