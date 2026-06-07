@@ -911,11 +911,6 @@
                 <div class="stat-value" id="statCredits">0</div>
                 <div class="stat-label">Credits</div>
             </div>
-            <div class="stat-card hidden" id="statQueueCard" style="cursor:pointer"
-                onclick="switchTab('settings')" data-i18n-title="stats.queueHint" title="">
-                <div class="stat-value" id="statQueue">0</div>
-                <div class="stat-label" data-i18n="stats.queue"></div>
-            </div>
         </div>
         <div class="tabs">
             <div class="tab active" data-tab="accounts" data-i18n="tabs.accounts"></div>
@@ -1039,29 +1034,19 @@
                         data-i18n="settings.endpointFallbackHint"></small>
                 </div>
                 <div class="form-group">
-                    <label data-i18n="settings.orgRPMLimit"></label>
-                    <input type="number" id="orgRPMLimit" min="0" step="1">
+                    <label data-i18n="settings.retry429Interval"></label>
+                    <input type="number" id="endpoint429RetryIntervalMs" min="0" step="500">
                     <small style="color:#64748b;font-size:12px;margin-top:4px;display:block"
-                        data-i18n="settings.orgRPMLimitHint"></small>
+                        data-i18n="settings.retry429IntervalHint"></small>
                 </div>
                 <div class="form-group">
-                    <label data-i18n="settings.rateLimitMaxWait"></label>
-                    <input type="number" id="rateLimitMaxWaitMs" min="0" step="1000">
+                    <label data-i18n="settings.retry429MaxWait"></label>
+                    <input type="number" id="endpoint429RetryMaxWaitMs" min="0" step="1000">
                     <small style="color:#64748b;font-size:12px;margin-top:4px;display:block"
-                        data-i18n="settings.rateLimitMaxWaitHint"></small>
+                        data-i18n="settings.retry429MaxWaitHint"></small>
                 </div>
                 <button class="btn btn-primary" onclick="saveEndpointConfig()"
                     data-i18n="settings.saveEndpoint"></button>
-            </div>
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title" data-i18n="settings.rateLimitMonitor"></span>
-                    <button class="btn" style="padding:4px 10px;font-size:13px" onclick="loadRateLimitQueue()"
-                        data-i18n="settings.rateLimitRefresh"></button>
-                </div>
-                <small style="color:#64748b;font-size:12px;display:block"
-                    data-i18n="settings.rateLimitMonitorHint"></small>
-                <div id="rateLimitQueueBody" style="margin-top:12px"></div>
             </div>
             <div class="card">
                 <div class="card-header"><span class="card-title" data-i18n="settings.adminPassword"></span></div>
@@ -1201,8 +1186,6 @@
                 'stats.requests': '请求',
                 'stats.success': '成功',
                 'stats.failed': '失败',
-                'stats.queue': '排队中',
-                'stats.queueHint': '当前等待限流放行的请求数，点击查看明细',
                 'tabs.accounts': '账号',
                 'tabs.settings': '设置',
                 'tabs.api': 'API',
@@ -1262,20 +1245,10 @@
                 'settings.endpointHint': '选择首选端点，自动选择模式下会根据可用性自动选择端点',
                 'settings.endpointFallback': '端点不可用时自动切换',
                 'settings.endpointFallbackHint': '关闭后，仅使用选定的端点，不会自动切换到其他端点',
-                'settings.orgRPMLimit': '组织每分钟请求上限 (RPM)',
-                'settings.orgRPMLimitHint': '按「账号+区域」平滑排队，避免突发请求撞上共享 RPM 限制导致 429 中断。0 = 关闭限速（保持原行为）',
-                'settings.rateLimitMaxWait': '排队等待上限 (毫秒)',
-                'settings.rateLimitMaxWaitHint': '请求排队等待令牌的最长时间，超过则快速失败并切换账号/区域，避免拖到客户端超时。0 = 默认 25000',
-                'settings.rateLimitMonitor': '实时排队监控',
-                'settings.rateLimitMonitorHint': '每 3 秒自动刷新，仅显示有排队或有历史的「账号+区域」。',
-                'settings.rateLimitRefresh': '刷新',
-                'settings.rateLimitDisabled': '限速已关闭（RPM = 0），无排队。',
-                'settings.rateLimitIdle': '当前无排队。',
-                'settings.rateLimitError': '获取排队状态失败。',
-                'settings.rateLimitTotalWaiting': '当前共 {0} 条请求在排队',
-                'settings.rateLimitWaiting': '排队 {0}',
-                'settings.rateLimitTokens': '令牌 {0}/{1}',
-                'settings.rateLimitTotals': '累计放行 {0} · 超时 {1}',
+                'settings.retry429Interval': '429 重试间隔 (毫秒)',
+                'settings.retry429IntervalHint': '当所有端点都返回 429（共享 RPM 暂时打满）时，等待此间隔后重试整组端点。0 = 关闭重试（撞到 429 立即切换账号/区域）',
+                'settings.retry429MaxWait': '429 重试总时长上限 (毫秒)',
+                'settings.retry429MaxWaitHint': '持续重试的最长总时长，超过则放弃并切换账号/区域，避免拖到客户端超时。0 = 默认 25000',
                 'settings.saveEndpoint': '保存端点设置',
                 'settings.endpointSaved': '端点设置已保存',
                 'settings.adminPassword': '管理密码',
@@ -1508,8 +1481,6 @@
                 'stats.requests': 'Requests',
                 'stats.success': 'Success',
                 'stats.failed': 'Failed',
-                'stats.queue': 'Queued',
-                'stats.queueHint': 'Requests waiting for rate-limit clearance — click for details',
                 'tabs.accounts': 'Accounts',
                 'tabs.settings': 'Settings',
                 'tabs.api': 'API',
@@ -1563,20 +1534,10 @@
                 'settings.endpointHint': 'Select preferred endpoint. In auto-select mode, the endpoint is automatically selected based on availability.',
                 'settings.endpointFallback': 'Fallback to other endpoints',
                 'settings.endpointFallbackHint': 'When disabled, only the selected endpoint is used without automatic fallback',
-                'settings.orgRPMLimit': 'Org requests-per-minute cap (RPM)',
-                'settings.orgRPMLimitHint': 'Smoothly queues requests per {account, region} so bursts do not hit the shared RPM ceiling and cause 429 interruptions. 0 = disabled (legacy behavior)',
-                'settings.rateLimitMaxWait': 'Max queue wait (ms)',
-                'settings.rateLimitMaxWaitHint': 'Longest a request waits for a token before failing fast and rotating account/region, so it never drags past the client timeout. 0 = default 25000',
-                'settings.rateLimitMonitor': 'Live queue monitor',
-                'settings.rateLimitMonitorHint': 'Auto-refreshes every 3s while this tab is open. Each row is one account+region bucket under contention.',
-                'settings.rateLimitRefresh': 'Refresh',
-                'settings.rateLimitDisabled': 'Rate limiting is off (RPM = 0). Set an RPM cap above to enable queuing.',
-                'settings.rateLimitIdle': 'No queuing right now — no bucket is under contention.',
-                'settings.rateLimitError': 'Failed to load queue status.',
-                'settings.rateLimitTotalWaiting': '{0} request(s) waiting in queue',
-                'settings.rateLimitWaiting': 'queued {0}',
-                'settings.rateLimitTokens': 'tokens {0}/{1}',
-                'settings.rateLimitTotals': 'granted {0} · timed out {1}',
+                'settings.retry429Interval': '429 retry interval (ms)',
+                'settings.retry429IntervalHint': 'When every endpoint returns 429 (shared org RPM momentarily exhausted), wait this long before retrying the endpoints again. 0 = retry disabled (fail fast, legacy behavior).',
+                'settings.retry429MaxWait': '429 retry time cap (ms)',
+                'settings.retry429MaxWaitHint': 'Total time budget for retrying after 429s before giving up and rotating to another account/region. Keep below the client timeout (default 25000).',
                 'settings.saveEndpoint': 'Save Endpoint Settings',
                 'settings.endpointSaved': 'Endpoint settings saved',
                 'settings.adminPassword': 'Admin Password',
@@ -1964,19 +1925,6 @@
             document.getElementById('statFailed').textContent = d.failedRequests || 0;
             document.getElementById('statTokens').textContent = formatNum(d.totalTokens || 0);
             document.getElementById('statCredits').textContent = (d.totalCredits || 0).toFixed(1);
-            loadQueueStat();
-        }
-        async function loadQueueStat() {
-            const card = document.getElementById('statQueueCard');
-            if (!card) return;
-            let d;
-            try {
-                const res = await fetch('/admin/api/rate-limit/queue', { headers: { 'X-Admin-Password': password } });
-                d = await res.json();
-            } catch (e) { card.classList.add('hidden'); return; }
-            if (!d || !d.enabled) { card.classList.add('hidden'); return; }
-            card.classList.remove('hidden');
-            document.getElementById('statQueue').textContent = d.totalWaiting || 0;
         }
         async function loadAccounts() {
             const res = await fetch('/admin/api/accounts', { headers: { 'X-Admin-Password': password } });
@@ -2574,13 +2522,13 @@
             const d = await res.json();
             document.getElementById('preferredEndpoint').value = d.preferredEndpoint || 'auto';
             document.getElementById('endpointFallback').checked = d.endpointFallback !== false;
-            document.getElementById('orgRPMLimit').value = d.orgRPMLimit || 0;
-            document.getElementById('rateLimitMaxWaitMs').value = d.rateLimitMaxWaitMs || 0;
+            document.getElementById('endpoint429RetryIntervalMs').value = d.endpoint429RetryIntervalMs || 0;
+            document.getElementById('endpoint429RetryMaxWaitMs').value = d.endpoint429RetryMaxWaitMs || 0;
         }
         async function saveEndpointConfig() {
             const res = await fetch('/admin/api/endpoint', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Admin-Password': password },
-                body: JSON.stringify({ preferredEndpoint: document.getElementById('preferredEndpoint').value, endpointFallback: document.getElementById('endpointFallback').checked, orgRPMLimit: parseInt(document.getElementById('orgRPMLimit').value, 10) || 0, rateLimitMaxWaitMs: parseInt(document.getElementById('rateLimitMaxWaitMs').value, 10) || 0 })
+                body: JSON.stringify({ preferredEndpoint: document.getElementById('preferredEndpoint').value, endpointFallback: document.getElementById('endpointFallback').checked, endpoint429RetryIntervalMs: parseInt(document.getElementById('endpoint429RetryIntervalMs').value, 10) || 0, endpoint429RetryMaxWaitMs: parseInt(document.getElementById('endpoint429RetryMaxWaitMs').value, 10) || 0 })
             });
             const d = await res.json();
             if (d.success) { alert(t('settings.endpointSaved')); } else { alert(t('common.saveFailed') + ': ' + d.error); }
@@ -2732,52 +2680,6 @@
             document.querySelectorAll('.tab').forEach(tabEl => tabEl.classList.toggle('active', tabEl.dataset.tab === tab));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
             document.getElementById('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.remove('hidden');
-            if (tab === 'settings') startRateLimitPolling();
-            else stopRateLimitPolling();
-        }
-        let rateLimitTimer = null;
-        async function loadRateLimitQueue() {
-            const body = document.getElementById('rateLimitQueueBody');
-            if (!body) return;
-            let d;
-            try {
-                const res = await fetch('/admin/api/rate-limit/queue', { headers: { 'X-Admin-Password': password } });
-                d = await res.json();
-            } catch (e) {
-                body.innerHTML = '<div style="color:#64748b">' + escapeHtml(t('settings.rateLimitError')) + '</div>';
-                return;
-            }
-            if (!d.enabled) {
-                body.innerHTML = '<div style="color:#64748b">' + escapeHtml(t('settings.rateLimitDisabled')) + '</div>';
-                return;
-            }
-            const buckets = d.buckets || [];
-            if (buckets.length === 0) {
-                body.innerHTML = '<div style="color:#64748b">' + escapeHtml(t('settings.rateLimitIdle')) + '</div>';
-                return;
-            }
-            const head = '<div style="color:#64748b;margin-bottom:8px">' + escapeHtml(t('settings.rateLimitTotalWaiting', d.totalWaiting || 0)) + '</div>';
-            const rows = buckets.map(function (b) {
-                const label = (b.email || b.accountId || '?') + (b.region ? (' · ' + b.region) : '');
-                const tokens = (typeof b.tokens === 'number' ? b.tokens : 0).toFixed(1);
-                return '<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid #e2e8f0;flex-wrap:wrap">' +
-                    '<div style="font-weight:600">' + escapeHtml(label) + '</div>' +
-                    '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:#475569">' +
-                    '<span>' + escapeHtml(t('settings.rateLimitWaiting', b.waiting || 0)) + '</span>' +
-                    '<span>' + escapeHtml(t('settings.rateLimitTokens', tokens, b.burst || 0)) + '</span>' +
-                    '<span>RPM ' + escapeHtml(String(b.rpm || 0)) + '</span>' +
-                    '<span>' + escapeHtml(t('settings.rateLimitTotals', b.grantedTotal || 0, b.timeoutTotal || 0)) + '</span>' +
-                    '</div></div>';
-            }).join('');
-            body.innerHTML = head + rows;
-        }
-        function startRateLimitPolling() {
-            stopRateLimitPolling();
-            loadRateLimitQueue();
-            rateLimitTimer = setInterval(loadRateLimitQueue, 3000);
-        }
-        function stopRateLimitPolling() {
-            if (rateLimitTimer) { clearInterval(rateLimitTimer); rateLimitTimer = null; }
         }
         async function toggleAccount(id, enabled) {
             await fetch('/admin/api/accounts/' + id, {

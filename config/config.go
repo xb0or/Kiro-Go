@@ -225,16 +225,17 @@ type Config struct {
 	// solely because usageCurrent >= usageLimit.
 	AllowOverUsage bool `json:"allowOverUsage,omitempty"`
 
-	// OrgRPMLimit is the per-{account,region} requests-per-minute ceiling used to
-	// smooth bursts against an organization's shared RPM quota. Requests wait in a
-	// token bucket instead of bursting past the limit and getting 429. 0 disables
-	// the limiter (pre-feature behavior, acts as a kill switch).
-	OrgRPMLimit int `json:"orgRPMLimit,omitempty"`
+	// Endpoint429RetryIntervalMs is the fixed delay between retry attempts when a
+	// request gets 429 from every endpoint (shared organization RPM exhausted).
+	// Instead of failing immediately, the request waits this long and retries the
+	// endpoints again. 0 falls back to a safe default.
+	Endpoint429RetryIntervalMs int `json:"endpoint429RetryIntervalMs,omitempty"`
 
-	// RateLimitMaxWaitMs caps how long a request may wait for a token before
-	// failing fast (so it falls through to account/region failover rather than
-	// blocking past the client's request timeout). 0 falls back to a safe default.
-	RateLimitMaxWaitMs int `json:"rateLimitMaxWaitMs,omitempty"`
+	// Endpoint429RetryMaxWaitMs caps the total time spent retrying after 429s
+	// before giving up and falling through to account/region failover. This keeps
+	// a request from blocking past the client's timeout. 0 falls back to a safe
+	// default. Set the interval to 0 to disable retry entirely (legacy behavior).
+	Endpoint429RetryMaxWaitMs int `json:"endpoint429RetryMaxWaitMs,omitempty"`
 
 	// Proxy configuration: optional outbound proxy for Kiro API requests
 	// Format: "socks5://host:port", "socks5://user:pass@host:port",
@@ -988,48 +989,55 @@ func UpdateEndpointFallback(enabled bool) error {
 	return Save()
 }
 
-// GetOrgRPMLimit returns the per-{account,region} requests-per-minute ceiling.
-// 0 (default) disables smooth queuing entirely — requests fire immediately and
-// rely on the legacy 429 failover path.
-func GetOrgRPMLimit() int {
+// GetEndpoint429RetryIntervalMs returns the fixed delay (ms) between retry
+// rounds after every endpoint returned 429. Defaults to 2000ms when unset.
+// A value of 0 disables 429 retry entirely (legacy fail-fast behavior).
+func GetEndpoint429RetryIntervalMs() int {
 	cfgLock.RLock()
 	defer cfgLock.RUnlock()
 	if cfg == nil {
+		return 2000
+	}
+	if cfg.Endpoint429RetryIntervalMs < 0 {
 		return 0
 	}
-	return cfg.OrgRPMLimit
+	if cfg.Endpoint429RetryIntervalMs == 0 {
+		return 2000
+	}
+	return cfg.Endpoint429RetryIntervalMs
 }
 
-// UpdateOrgRPMLimit sets the per-{account,region} RPM ceiling and persists it.
-func UpdateOrgRPMLimit(rpm int) error {
+// UpdateEndpoint429RetryIntervalMs sets the retry interval (ms) and persists it.
+// Pass -1 to disable retry; 0 keeps the default.
+func UpdateEndpoint429RetryIntervalMs(ms int) error {
 	cfgLock.Lock()
 	defer cfgLock.Unlock()
-	if rpm < 0 {
-		rpm = 0
+	if ms < -1 {
+		ms = -1
 	}
-	cfg.OrgRPMLimit = rpm
+	cfg.Endpoint429RetryIntervalMs = ms
 	return Save()
 }
 
-// GetRateLimitMaxWaitMs returns the queue wait cap in milliseconds. Defaults to
-// 25000ms (25s) when unset, leaving headroom under the client's request timeout.
-func GetRateLimitMaxWaitMs() int {
+// GetEndpoint429RetryMaxWaitMs returns the total retry-time cap in ms. Defaults
+// to 25000ms (25s) when unset, leaving headroom under the client's timeout.
+func GetEndpoint429RetryMaxWaitMs() int {
 	cfgLock.RLock()
 	defer cfgLock.RUnlock()
-	if cfg == nil || cfg.RateLimitMaxWaitMs <= 0 {
+	if cfg == nil || cfg.Endpoint429RetryMaxWaitMs <= 0 {
 		return 25000
 	}
-	return cfg.RateLimitMaxWaitMs
+	return cfg.Endpoint429RetryMaxWaitMs
 }
 
-// UpdateRateLimitMaxWaitMs sets the queue wait cap (ms) and persists it.
-func UpdateRateLimitMaxWaitMs(ms int) error {
+// UpdateEndpoint429RetryMaxWaitMs sets the total retry-time cap (ms) and persists it.
+func UpdateEndpoint429RetryMaxWaitMs(ms int) error {
 	cfgLock.Lock()
 	defer cfgLock.Unlock()
 	if ms < 0 {
 		ms = 0
 	}
-	cfg.RateLimitMaxWaitMs = ms
+	cfg.Endpoint429RetryMaxWaitMs = ms
 	return Save()
 }
 

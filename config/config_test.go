@@ -150,3 +150,41 @@ func TestAccountAllowOverageMigration(t *testing.T) {
 		}
 	}
 }
+
+func TestEndpoint429RetryKnobDefaultsAndDisable(t *testing.T) {
+	if err := Init(filepath.Join(t.TempDir(), "config.json")); err != nil {
+		t.Fatalf("init config: %v", err)
+	}
+
+	// Unset (0) falls back to the safe defaults.
+	if got := GetEndpoint429RetryIntervalMs(); got != 2000 {
+		t.Fatalf("expected default interval 2000, got %d", got)
+	}
+	if got := GetEndpoint429RetryMaxWaitMs(); got != 25000 {
+		t.Fatalf("expected default max-wait 25000, got %d", got)
+	}
+
+	// A positive interval is used verbatim.
+	if err := UpdateEndpoint429RetryIntervalMs(1500); err != nil {
+		t.Fatalf("update interval: %v", err)
+	}
+	if got := GetEndpoint429RetryIntervalMs(); got != 1500 {
+		t.Fatalf("expected interval 1500, got %d", got)
+	}
+
+	// -1 disables retry: the getter reports 0 so the caller skips the retry loop.
+	if err := UpdateEndpoint429RetryIntervalMs(-1); err != nil {
+		t.Fatalf("disable interval: %v", err)
+	}
+	if got := GetEndpoint429RetryIntervalMs(); got != 0 {
+		t.Fatalf("expected disabled interval to report 0, got %d", got)
+	}
+
+	// Negative max-wait is normalized to 0, which the getter maps to the default.
+	if err := UpdateEndpoint429RetryMaxWaitMs(-5); err != nil {
+		t.Fatalf("update max-wait: %v", err)
+	}
+	if got := GetEndpoint429RetryMaxWaitMs(); got != 25000 {
+		t.Fatalf("expected normalized max-wait to fall back to 25000, got %d", got)
+	}
+}

@@ -659,7 +659,7 @@
 
   // Data loaders
   async function loadData() {
-    await Promise.all([loadStats(), loadQueueStat(), loadAccounts(), loadSettings(), loadVersion()]);
+    await Promise.all([loadStats(), loadAccounts(), loadSettings(), loadVersion()]);
     renderEndpointCode('claudeEndpoint', baseUrl + '/v1/messages');
     renderEndpointCode('openaiEndpoint', baseUrl + '/v1/chat/completions');
     renderEndpointCode('openaiResponsesEndpoint', baseUrl + '/v1/responses');
@@ -676,29 +676,6 @@
     $('statFailed').textContent = d.failedRequests || 0;
     $('statTokens').textContent = formatNum(d.totalTokens || 0);
     $('statCredits').textContent = (d.totalCredits || 0).toFixed(1);
-  }
-  // Updates the dashboard "queued" stat card from the rate-limit snapshot. The
-  // card is hidden entirely when limiting is off (rpm=0), so it never shows a
-  // misleading 0 when the feature isn't in use.
-  async function loadQueueStat() {
-    const card = $('statQueueCard');
-    if (!card) return;
-    let d;
-    try {
-      const res = await api('/rate-limit/queue');
-      d = await res.json();
-    } catch (e) {
-      card.classList.add('hidden');
-      return;
-    }
-    if (!d.enabled) {
-      card.classList.add('hidden');
-      return;
-    }
-    card.classList.remove('hidden');
-    $('statQueue').textContent = d.totalWaiting || 0;
-    $('statQueueRpm').textContent = d.rpm || 0;
-    card.classList.toggle('stat-card--active', (d.totalWaiting || 0) > 0);
   }
   async function loadAccounts() {
     const res = await api('/accounts');
@@ -1619,66 +1596,21 @@
     const d = await res.json();
     $('preferredEndpoint').value = d.preferredEndpoint || 'auto';
     $('endpointFallback').checked = d.endpointFallback !== false;
-    $('orgRPMLimit').value = d.orgRPMLimit || 0;
-    $('rateLimitMaxWaitMs').value = d.rateLimitMaxWaitMs || 0;
+    $('endpoint429RetryIntervalMs').value = d.endpoint429RetryIntervalMs || 0;
+    $('endpoint429RetryMaxWaitMs').value = d.endpoint429RetryMaxWaitMs || 0;
   }
   async function saveEndpointConfig() {
     const res = await api('/endpoint', {
       method: 'POST', body: JSON.stringify({
         preferredEndpoint: $('preferredEndpoint').value,
         endpointFallback: $('endpointFallback').checked,
-        orgRPMLimit: parseInt($('orgRPMLimit').value, 10) || 0,
-        rateLimitMaxWaitMs: parseInt($('rateLimitMaxWaitMs').value, 10) || 0
+        endpoint429RetryIntervalMs: parseInt($('endpoint429RetryIntervalMs').value, 10) || 0,
+        endpoint429RetryMaxWaitMs: parseInt($('endpoint429RetryMaxWaitMs').value, 10) || 0
       })
     });
     const d = await res.json();
     if (d.success) toast(t('settings.endpointSaved'), 'success');
     else toast(t('common.saveFailed') + ': ' + (d.error || ''), 'error');
-  }
-  let rateLimitTimer = null;
-  async function loadRateLimitQueue() {
-    const body = $('rateLimitQueueBody');
-    if (!body) return;
-    let d;
-    try {
-      const res = await api('/rate-limit/queue');
-      d = await res.json();
-    } catch (e) {
-      body.innerHTML = '<div class="muted">' + escapeHtml(t('settings.rateLimitError')) + '</div>';
-      return;
-    }
-    if (!d.enabled) {
-      body.innerHTML = '<div class="muted">' + escapeHtml(t('settings.rateLimitDisabled')) + '</div>';
-      return;
-    }
-    const buckets = d.buckets || [];
-    if (buckets.length === 0) {
-      body.innerHTML = '<div class="muted">' + escapeHtml(t('settings.rateLimitIdle')) + '</div>';
-      return;
-    }
-    const head = '<div class="muted" style="margin-bottom:8px">' +
-      escapeHtml(t('settings.rateLimitTotalWaiting', d.totalWaiting || 0)) + '</div>';
-    const rows = buckets.map(function (b) {
-      const label = (b.email || b.accountId || '?') + (b.region ? (' · ' + b.region) : '');
-      const tokens = (typeof b.tokens === 'number' ? b.tokens : 0).toFixed(1);
-      return '<div class="rl-row">' +
-        '<div class="rl-label">' + escapeHtml(label) + '</div>' +
-        '<div class="rl-stats">' +
-        '<span class="badge-meta">' + escapeHtml(t('settings.rateLimitWaiting', b.waiting || 0)) + '</span>' +
-        '<span class="badge-meta">' + escapeHtml(t('settings.rateLimitTokens', tokens, b.burst || 0)) + '</span>' +
-        '<span class="badge-meta">RPM ' + escapeHtml(String(b.rpm || 0)) + '</span>' +
-        '<span class="muted">' + escapeHtml(t('settings.rateLimitTotals', b.grantedTotal || 0, b.timeoutTotal || 0)) + '</span>' +
-        '</div></div>';
-    }).join('');
-    body.innerHTML = head + rows;
-  }
-  function startRateLimitPolling() {
-    stopRateLimitPolling();
-    loadRateLimitQueue();
-    rateLimitTimer = setInterval(loadRateLimitQueue, 3000);
-  }
-  function stopRateLimitPolling() {
-    if (rateLimitTimer) { clearInterval(rateLimitTimer); rateLimitTimer = null; }
   }
   async function loadProxyConfig() {
     const res = await api('/proxy');
@@ -2802,9 +2734,6 @@
     qsa('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
     qsa('.tab-content').forEach(c => c.classList.add('hidden'));
     $('tab' + tab.charAt(0).toUpperCase() + tab.slice(1)).classList.remove('hidden');
-    // Live-poll the rate-limit queue only while the settings tab is visible.
-    if (tab === 'settings') startRateLimitPolling();
-    else stopRateLimitPolling();
   }
 
   // Event wiring
@@ -2909,14 +2838,6 @@
     $('saveClientModeBtn').addEventListener('click', saveClientModeConfig);
     $('saveThinkingBtn').addEventListener('click', saveThinkingConfig);
     $('saveEndpointBtn').addEventListener('click', saveEndpointConfig);
-    const refreshRL = $('refreshRateLimitBtn');
-    if (refreshRL) refreshRL.addEventListener('click', loadRateLimitQueue);
-    const queueCard = $('statQueueCard');
-    if (queueCard) {
-      const goSettings = () => { switchTab('settings'); queueCard.scrollIntoView && $('rateLimitQueueBody').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
-      queueCard.addEventListener('click', goSettings);
-      queueCard.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goSettings(); } });
-    }
     $('changePasswordBtn').addEventListener('click', changePassword);
     $('proxyType').addEventListener('change', onProxyTypeChange);
     $('saveProxyBtn').addEventListener('click', saveProxyConfig);
@@ -3034,10 +2955,6 @@
     setInterval(() => {
       if (!$('mainPage').classList.contains('hidden')) loadStats();
     }, 10000);
-    // Poll the queue stat card faster so contention shows up promptly.
-    setInterval(() => {
-      if (!$('mainPage').classList.contains('hidden')) loadQueueStat();
-    }, 5000);
   }
 
   if (document.readyState === 'loading') {

@@ -428,31 +428,6 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 		}
 	}
 
-	// Smooth queuing against the shared organization RPM. idc accounts in one
-	// AWS org share a single requests-per-minute ceiling per region; bursting
-	// past it returns 429 and interrupts the coding session. We pace requests
-	// per {account,region} bucket here: wait for a token instead of firing and
-	// retrying on 429. The wait is capped so a saturated bucket fails fast and
-	// falls through to account/region failover rather than blocking past the
-	// client's request timeout. rpm=0 disables this and keeps legacy behavior.
-	if rpm := config.GetOrgRPMLimit(); rpm > 0 && account != nil {
-		key := account.ID + ":" + dispatchRegion
-		maxWait := time.Duration(config.GetRateLimitMaxWaitMs()) * time.Millisecond
-		granted, waited, queueDepth := globalRateLimiter.WaitInfo(key, rpm, maxWait)
-		// Log only when the request actually queued (waited a meaningful amount
-		// or found peers ahead of it), so the backend log shows live contention
-		// without spamming a line per request under normal load.
-		if waited >= 50*time.Millisecond || queueDepth > 0 {
-			logger.Warnf("[RateLimit] Queued request: account=%s region=%s rpm=%d waitedMs=%d aheadInQueue=%d granted=%t",
-				account.Email, dispatchRegion, rpm, waited.Milliseconds(), queueDepth, granted)
-		}
-		if !granted {
-			logger.Warnf("[KiroAPI] Rate limit queue timeout: account=%s region=%s rpm=%d maxWaitMs=%d",
-				account.Email, dispatchRegion, rpm, config.GetRateLimitMaxWaitMs())
-			return fmt.Errorf("rate limit queue timeout for %s region=%s (rpm=%d): quota exhausted", account.Email, dispatchRegion, rpm)
-		}
-	}
-
 	if _, err := json.Marshal(payload); err != nil {
 		return err
 	}
@@ -479,83 +454,126 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 	// Build endpoint list ordered by configuration.
 	endpoints := getSortedEndpoints(config.GetPreferredEndpoint())
 
+	// Reactive 429 queuing: idc accounts in one AWS org share a single
+	// requests-per-minute ceiling. Instead of pacing requests up front, we fire
+	// immediately and only back off when EVERY endpoint returns 429 (the signal
+	// the shared RPM is momentarily saturated). On that all-429 outcome we wait a
+	// fixed interval and retry the whole endpoint list, up to a total time cap.
+	// Exceeding the cap falls through to account/region failover via lastErr.
+	// Interval=0 disables retry and keeps the legacy single-pass behavior.
+	retryInterval := time.Duration(config.GetEndpoint429RetryIntervalMs()) * time.Millisecond
+	retryDeadline := time.Now().Add(time.Duration(config.GetEndpoint429RetryMaxWaitMs()) * time.Millisecond)
+
 	var lastErr error
-	for _, ep := range endpoints {
-		// ep is a value copy; rewriting its URL to the dispatch region (idc only)
-		// keeps the global kiroEndpoints slice untouched.
-		ep.URL = regionizeURLTo(ep.URL, dispatchRegion)
+	for attempt := 0; ; attempt++ {
+		allEndpoints429 := true
+		sawEndpoint := false
+		for _, ep := range endpoints {
+			// ep is a value copy; rewriting its URL to the dispatch region (idc only)
+			// keeps the global kiroEndpoints slice untouched.
+			ep.URL = regionizeURLTo(ep.URL, dispatchRegion)
 
-		// Update user-message origin/envState for the selected account/client mode.
-		applyClientModeToPayloadForMode(payload, config.EffectiveClientMode(account))
+			// Update user-message origin/envState for the selected account/client mode.
+			applyClientModeToPayloadForMode(payload, config.EffectiveClientMode(account))
 
-		if ep.RequiresProfileArn && (payload == nil || strings.TrimSpace(payload.ProfileArn) == "") {
-			lastErr = fmt.Errorf("profileArn is required for %s", ep.Name)
-			logger.Warnf("[KiroAPI] Skip endpoint without profileArn: endpoint=%s url=%s clientMode=%s origin=%s",
-				ep.Name, ep.URL, config.EffectiveClientMode(account).Normalize(), currentPayloadOrigin(payload))
-			continue
-		}
-
-		reqBody, _ := json.Marshal(payload)
-		req, err := http.NewRequest("POST", ep.URL, bytes.NewReader(reqBody))
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		host := ""
-		if parsedURL, parseErr := url.Parse(ep.URL); parseErr == nil {
-			host = parsedURL.Host
-		}
-		headerValues := buildStreamingHeaderValues(account, host)
-		logContext := kiroEndpointLogContext(ep, account, payload, headerValues)
-		logger.Debugf("[KiroAPI] Sending request: %s", logContext)
-
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "*/*")
-		if ep.AmzTarget != "" {
-			req.Header.Set("X-Amz-Target", ep.AmzTarget)
-		}
-		applyKiroBaseHeaders(req, account, headerValues)
-		req.Header.Set("x-amzn-kiro-agent-mode", "vibe")
-		req.Header.Set("Amz-Sdk-Request", "attempt=1; max=3")
-		req.Header.Set("Amz-Sdk-Invocation-Id", uuid.New().String())
-
-		resp, err := GetClientForProxy(ResolveAccountProxyURL(account)).Do(req)
-		if err != nil {
-			lastErr = err
-			logger.Warnf("[KiroAPI] Request failed: %s error=%v", logContext, err)
-			continue
-		}
-
-		if resp.StatusCode == 429 {
-			resp.Body.Close()
-			logger.Warnf("[KiroAPI] Quota exhausted, trying next endpoint: %s status=429", logContext)
-			lastErr = fmt.Errorf("quota exhausted on %s", ep.Name)
-			continue
-		}
-
-		if resp.StatusCode != 200 {
-			errBody, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			lastErr = fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, ep.Name, string(errBody))
-			// Authentication errors and payment errors are not retried across endpoints.
-			if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
-				return lastErr
+			if ep.RequiresProfileArn && (payload == nil || strings.TrimSpace(payload.ProfileArn) == "") {
+				lastErr = fmt.Errorf("profileArn is required for %s", ep.Name)
+				logger.Warnf("[KiroAPI] Skip endpoint without profileArn: endpoint=%s url=%s clientMode=%s origin=%s",
+					ep.Name, ep.URL, config.EffectiveClientMode(account).Normalize(), currentPayloadOrigin(payload))
+				continue
 			}
-			logger.Warnf("[KiroAPI] Endpoint error: %s status=%d body=%s", logContext, resp.StatusCode, string(errBody))
-			continue
+			sawEndpoint = true
+
+			reqBody, _ := json.Marshal(payload)
+			req, err := http.NewRequest("POST", ep.URL, bytes.NewReader(reqBody))
+			if err != nil {
+				lastErr = err
+				allEndpoints429 = false
+				continue
+			}
+
+			host := ""
+			if parsedURL, parseErr := url.Parse(ep.URL); parseErr == nil {
+				host = parsedURL.Host
+			}
+			headerValues := buildStreamingHeaderValues(account, host)
+			logContext := kiroEndpointLogContext(ep, account, payload, headerValues)
+			logger.Debugf("[KiroAPI] Sending request: %s", logContext)
+
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "*/*")
+			if ep.AmzTarget != "" {
+				req.Header.Set("X-Amz-Target", ep.AmzTarget)
+			}
+			applyKiroBaseHeaders(req, account, headerValues)
+			req.Header.Set("x-amzn-kiro-agent-mode", "vibe")
+			req.Header.Set("Amz-Sdk-Request", "attempt=1; max=3")
+			req.Header.Set("Amz-Sdk-Invocation-Id", uuid.New().String())
+
+			resp, err := GetClientForProxy(ResolveAccountProxyURL(account)).Do(req)
+			if err != nil {
+				lastErr = err
+				allEndpoints429 = false
+				logger.Warnf("[KiroAPI] Request failed: %s error=%v", logContext, err)
+				continue
+			}
+
+			if resp.StatusCode == 429 {
+				resp.Body.Close()
+				logger.Warnf("[KiroAPI] Quota exhausted, trying next endpoint: %s status=429", logContext)
+				lastErr = fmt.Errorf("quota exhausted on %s", ep.Name)
+				continue
+			}
+
+			// Any non-429 response means the shared RPM wasn't the blocker, so
+			// don't queue/retry on its account.
+			allEndpoints429 = false
+
+			if resp.StatusCode != 200 {
+				errBody, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				lastErr = fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, ep.Name, string(errBody))
+				// Authentication errors and payment errors are not retried across endpoints.
+				if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
+					return lastErr
+				}
+				logger.Warnf("[KiroAPI] Endpoint error: %s status=%d body=%s", logContext, resp.StatusCode, string(errBody))
+				continue
+			}
+
+			logger.Debugf("[KiroAPI] Endpoint accepted: %s status=200", logContext)
+			err = parseEventStream(resp.Body, callback)
+			resp.Body.Close()
+			return err
 		}
 
-		logger.Debugf("[KiroAPI] Endpoint accepted: %s status=200", logContext)
-		err = parseEventStream(resp.Body, callback)
-		resp.Body.Close()
-		return err
+		// Only queue+retry when every endpoint that actually fired returned 429
+		// and retry is enabled and we still have budget under the time cap.
+		if !sawEndpoint || !allEndpoints429 || retryInterval <= 0 {
+			break
+		}
+		if time.Now().Add(retryInterval).After(retryDeadline) {
+			logger.Warnf("[KiroAPI] Rate limit retry budget exhausted: account=%s region=%s attempts=%d maxWaitMs=%d",
+				accountEmailOr(account, "<nil>"), dispatchRegion, attempt+1, config.GetEndpoint429RetryMaxWaitMs())
+			break
+		}
+		logger.Warnf("[KiroAPI] All endpoints 429, queuing retry: account=%s region=%s attempt=%d intervalMs=%d",
+			accountEmailOr(account, "<nil>"), dispatchRegion, attempt+1, config.GetEndpoint429RetryIntervalMs())
+		time.Sleep(retryInterval)
 	}
 
 	if lastErr != nil {
 		return lastErr
 	}
 	return fmt.Errorf("all endpoints failed")
+}
+
+// accountEmailOr returns the account email or a fallback when account is nil.
+func accountEmailOr(account *config.Account, fallback string) string {
+	if account == nil {
+		return fallback
+	}
+	return account.Email
 }
 
 // ==================== Event Stream Parsing ====================

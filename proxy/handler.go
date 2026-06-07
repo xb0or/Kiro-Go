@@ -2131,8 +2131,6 @@ func (h *Handler) handleAdminAPI(w http.ResponseWriter, r *http.Request) {
 		h.apiGetEndpointConfig(w, r)
 	case path == "/endpoint" && r.Method == "POST":
 		h.apiUpdateEndpointConfig(w, r)
-	case path == "/rate-limit/queue" && r.Method == "GET":
-		h.apiGetRateLimitQueue(w, r)
 	case path == "/proxy" && r.Method == "GET":
 		h.apiGetProxy(w, r)
 	case path == "/proxy" && r.Method == "POST":
@@ -3504,20 +3502,20 @@ func (h *Handler) apiUpdateThinkingConfig(w http.ResponseWriter, r *http.Request
 // apiGetEndpointConfig 获取端点配置
 func (h *Handler) apiGetEndpointConfig(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"preferredEndpoint":  config.GetPreferredEndpoint(),
-		"endpointFallback":   config.GetEndpointFallback(),
-		"orgRPMLimit":        config.GetOrgRPMLimit(),
-		"rateLimitMaxWaitMs": config.GetRateLimitMaxWaitMs(),
+		"preferredEndpoint":          config.GetPreferredEndpoint(),
+		"endpointFallback":           config.GetEndpointFallback(),
+		"endpoint429RetryIntervalMs": config.GetEndpoint429RetryIntervalMs(),
+		"endpoint429RetryMaxWaitMs":  config.GetEndpoint429RetryMaxWaitMs(),
 	})
 }
 
 // apiUpdateEndpointConfig 更新端点配置
 func (h *Handler) apiUpdateEndpointConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PreferredEndpoint  string `json:"preferredEndpoint"`
-		EndpointFallback   *bool  `json:"endpointFallback"`
-		OrgRPMLimit        *int   `json:"orgRPMLimit"`
-		RateLimitMaxWaitMs *int   `json:"rateLimitMaxWaitMs"`
+		PreferredEndpoint          string `json:"preferredEndpoint"`
+		EndpointFallback           *bool  `json:"endpointFallback"`
+		Endpoint429RetryIntervalMs *int   `json:"endpoint429RetryIntervalMs"`
+		Endpoint429RetryMaxWaitMs  *int   `json:"endpoint429RetryMaxWaitMs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(400)
@@ -3542,49 +3540,19 @@ func (h *Handler) apiUpdateEndpointConfig(w http.ResponseWriter, r *http.Request
 		config.UpdateEndpointFallback(*req.EndpointFallback)
 	}
 
-	if req.OrgRPMLimit != nil {
-		rpm := *req.OrgRPMLimit
-		if rpm < 0 {
-			rpm = 0
-		}
-		config.UpdateOrgRPMLimit(rpm)
+	if req.Endpoint429RetryIntervalMs != nil {
+		config.UpdateEndpoint429RetryIntervalMs(*req.Endpoint429RetryIntervalMs)
 	}
 
-	if req.RateLimitMaxWaitMs != nil {
-		ms := *req.RateLimitMaxWaitMs
+	if req.Endpoint429RetryMaxWaitMs != nil {
+		ms := *req.Endpoint429RetryMaxWaitMs
 		if ms < 0 {
 			ms = 0
 		}
-		config.UpdateRateLimitMaxWaitMs(ms)
+		config.UpdateEndpoint429RetryMaxWaitMs(ms)
 	}
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
-}
-
-// apiGetRateLimitStatus 返回限速器实时排队快照，供后台监控面板使用。
-// 每个 bucket 对应一个「账号+区域」，展示当前排队数、剩余令牌、累计放行/超时数。
-func (h *Handler) apiGetRateLimitQueue(w http.ResponseWriter, r *http.Request) {
-	rpm := config.GetOrgRPMLimit()
-	stats := globalRateLimiter.Snapshot(rpm)
-
-	// Enrich each bucket with the account email for readability (key only carries ID).
-	emailByID := make(map[string]string)
-	for _, a := range config.GetAccounts() {
-		emailByID[a.ID] = a.Email
-	}
-	var totalWaiting int
-	for i := range stats {
-		stats[i].Email = emailByID[stats[i].AccountID]
-		totalWaiting += stats[i].Waiting
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"enabled":      rpm > 0,
-		"rpm":          rpm,
-		"maxWaitMs":    config.GetRateLimitMaxWaitMs(),
-		"totalWaiting": totalWaiting,
-		"buckets":      stats,
-	})
 }
 
 // applyProxyConfig 将代理配置应用到所有出站 HTTP 客户端（Kiro API + auth 模块）
