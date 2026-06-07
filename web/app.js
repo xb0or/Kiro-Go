@@ -659,7 +659,7 @@
 
   // Data loaders
   async function loadData() {
-    await Promise.all([loadStats(), loadAccounts(), loadSettings(), loadVersion()]);
+    await Promise.all([loadStats(), loadQueueStat(), loadAccounts(), loadSettings(), loadVersion()]);
     renderEndpointCode('claudeEndpoint', baseUrl + '/v1/messages');
     renderEndpointCode('openaiEndpoint', baseUrl + '/v1/chat/completions');
     renderEndpointCode('openaiResponsesEndpoint', baseUrl + '/v1/responses');
@@ -676,6 +676,29 @@
     $('statFailed').textContent = d.failedRequests || 0;
     $('statTokens').textContent = formatNum(d.totalTokens || 0);
     $('statCredits').textContent = (d.totalCredits || 0).toFixed(1);
+  }
+  // Updates the dashboard "queued" stat card from the rate-limit snapshot. The
+  // card is hidden entirely when limiting is off (rpm=0), so it never shows a
+  // misleading 0 when the feature isn't in use.
+  async function loadQueueStat() {
+    const card = $('statQueueCard');
+    if (!card) return;
+    let d;
+    try {
+      const res = await api('/rate-limit/queue');
+      d = await res.json();
+    } catch (e) {
+      card.classList.add('hidden');
+      return;
+    }
+    if (!d.enabled) {
+      card.classList.add('hidden');
+      return;
+    }
+    card.classList.remove('hidden');
+    $('statQueue').textContent = d.totalWaiting || 0;
+    $('statQueueRpm').textContent = d.rpm || 0;
+    card.classList.toggle('stat-card--active', (d.totalWaiting || 0) > 0);
   }
   async function loadAccounts() {
     const res = await api('/accounts');
@@ -2888,6 +2911,12 @@
     $('saveEndpointBtn').addEventListener('click', saveEndpointConfig);
     const refreshRL = $('refreshRateLimitBtn');
     if (refreshRL) refreshRL.addEventListener('click', loadRateLimitQueue);
+    const queueCard = $('statQueueCard');
+    if (queueCard) {
+      const goSettings = () => { switchTab('settings'); queueCard.scrollIntoView && $('rateLimitQueueBody').scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+      queueCard.addEventListener('click', goSettings);
+      queueCard.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goSettings(); } });
+    }
     $('changePasswordBtn').addEventListener('click', changePassword);
     $('proxyType').addEventListener('change', onProxyTypeChange);
     $('saveProxyBtn').addEventListener('click', saveProxyConfig);
@@ -3005,6 +3034,10 @@
     setInterval(() => {
       if (!$('mainPage').classList.contains('hidden')) loadStats();
     }, 10000);
+    // Poll the queue stat card faster so contention shows up promptly.
+    setInterval(() => {
+      if (!$('mainPage').classList.contains('hidden')) loadQueueStat();
+    }, 5000);
   }
 
   if (document.readyState === 'loading') {

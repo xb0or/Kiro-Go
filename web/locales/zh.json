@@ -16,6 +16,8 @@
   "stats.failed": "失败",
   "stats.completed": "已完成",
   "stats.errors": "错误",
+  "stats.queue": "排队中",
+  "stats.queueHint": "当前排队等待令牌的请求数，点击查看明细",
   "stats.tokens": "Tokens",
   "stats.credits": "Credits",
   "stats.capacity": "容量",

@@ -16,6 +16,8 @@
   "stats.failed": "Failed",
   "stats.completed": "Completed",
   "stats.errors": "Errors",
+  "stats.queue": "Queued",
+  "stats.queueHint": "Requests currently waiting for a token. Click for details.",
   "stats.tokens": "Tokens",
   "stats.credits": "Credits",
   "stats.capacity": "Capacity",

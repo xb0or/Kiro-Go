@@ -911,6 +911,11 @@
                 <div class="stat-value" id="statCredits">0</div>
                 <div class="stat-label">Credits</div>
             </div>
+            <div class="stat-card hidden" id="statQueueCard" style="cursor:pointer"
+                onclick="switchTab('settings')" data-i18n-title="stats.queueHint" title="">
+                <div class="stat-value" id="statQueue">0</div>
+                <div class="stat-label" data-i18n="stats.queue"></div>
+            </div>
         </div>
         <div class="tabs">
             <div class="tab active" data-tab="accounts" data-i18n="tabs.accounts"></div>
@@ -1196,6 +1201,8 @@
                 'stats.requests': '请求',
                 'stats.success': '成功',
                 'stats.failed': '失败',
+                'stats.queue': '排队中',
+                'stats.queueHint': '当前等待限流放行的请求数，点击查看明细',
                 'tabs.accounts': '账号',
                 'tabs.settings': '设置',
                 'tabs.api': 'API',
@@ -1501,6 +1508,8 @@
                 'stats.requests': 'Requests',
                 'stats.success': 'Success',
                 'stats.failed': 'Failed',
+                'stats.queue': 'Queued',
+                'stats.queueHint': 'Requests waiting for rate-limit clearance — click for details',
                 'tabs.accounts': 'Accounts',
                 'tabs.settings': 'Settings',
                 'tabs.api': 'API',
@@ -1811,6 +1820,9 @@
             document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
                 el.placeholder = t(el.dataset.i18nPlaceholder);
             });
+            document.querySelectorAll('[data-i18n-title]').forEach(el => {
+                el.title = t(el.dataset.i18nTitle);
+            });
         }
 
         let password = localStorage.getItem('admin_password') || '';
@@ -1952,6 +1964,19 @@
             document.getElementById('statFailed').textContent = d.failedRequests || 0;
             document.getElementById('statTokens').textContent = formatNum(d.totalTokens || 0);
             document.getElementById('statCredits').textContent = (d.totalCredits || 0).toFixed(1);
+            loadQueueStat();
+        }
+        async function loadQueueStat() {
+            const card = document.getElementById('statQueueCard');
+            if (!card) return;
+            let d;
+            try {
+                const res = await fetch('/admin/api/rate-limit/queue', { headers: { 'X-Admin-Password': password } });
+                d = await res.json();
+            } catch (e) { card.classList.add('hidden'); return; }
+            if (!d || !d.enabled) { card.classList.add('hidden'); return; }
+            card.classList.remove('hidden');
+            document.getElementById('statQueue').textContent = d.totalWaiting || 0;
         }
         async function loadAccounts() {
             const res = await fetch('/admin/api/accounts', { headers: { 'X-Admin-Password': password } });

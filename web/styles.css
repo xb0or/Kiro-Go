@@ -1192,6 +1192,24 @@ img.brand-icon {
   gap: 0.625rem;
   min-width: 0;
 }
+.stat-card--clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.stat-card--clickable:hover {
+  border-color: var(--muted-foreground);
+}
+.stat-card--clickable:focus-visible {
+  outline: 2px solid var(--muted-foreground);
+  outline-offset: 2px;
+}
+.stat-card--active {
+  border-color: var(--destructive, #dc2626);
+}
+.stat-card--active .stat-value,
+.stat-card--active .stat-icon {
+  color: var(--destructive, #dc2626);
+}
 .stat-card-title {
   color: var(--muted-foreground);
   font-size: 0.75rem;
