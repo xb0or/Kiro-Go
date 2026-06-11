@@ -2856,11 +2856,58 @@ func (h *Handler) apiImportCredentials(w http.ResponseWriter, r *http.Request) {
 		Provider     string `json:"provider"`
 		Region       string `json:"region"`
 		ClientMode   string `json:"clientMode"`
+		// snake_case alternatives (Kiro durable format)
+		AccessTokenSC  string `json:"access_token"`
+		RefreshTokenSC string `json:"refresh_token"`
+		ClientIDSC     string `json:"client_id"`
+		ClientSecretSC string `json:"client_secret"`
+		AuthMethodSC   string `json:"auth_method"`
+		ClientModeSC   string `json:"client_mode"`
+		Type           string `json:"type"`
+		// profile_arn / expires_at (both camelCase and snake_case)
+		ProfileArn   string `json:"profileArn"`
+		ProfileArnSC string `json:"profile_arn"`
+		ExpiresAt    string `json:"expiresAt"`
+		ExpiresAtSC  string `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(400)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON"})
 		return
+	}
+	// Merge snake_case fields into camelCase (snake_case as fallback)
+	if req.AccessToken == "" {
+		req.AccessToken = req.AccessTokenSC
+	}
+	if req.RefreshToken == "" {
+		req.RefreshToken = req.RefreshTokenSC
+	}
+	if req.ClientID == "" {
+		req.ClientID = req.ClientIDSC
+	}
+	if req.ClientSecret == "" {
+		req.ClientSecret = req.ClientSecretSC
+	}
+	if req.AuthMethod == "" {
+		req.AuthMethod = req.AuthMethodSC
+	}
+	if req.ClientMode == "" {
+		req.ClientMode = req.ClientModeSC
+	}
+	if req.ProfileArn == "" {
+		req.ProfileArn = req.ProfileArnSC
+	}
+	if req.ExpiresAt == "" {
+		req.ExpiresAt = req.ExpiresAtSC
+	}
+	// Map "type" field to clientMode if not already set
+	if req.ClientMode == "" && req.Type != "" {
+		switch req.Type {
+		case "kiro-ide", "kiro-cli":
+			req.ClientMode = req.Type
+		case "kiro":
+			req.ClientMode = "kiro-ide"
+		}
 	}
 
 	req.ClientMode = strings.TrimSpace(req.ClientMode)
@@ -2924,6 +2971,16 @@ func (h *Handler) apiImportCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	if newRefreshToken != "" {
 		req.RefreshToken = newRefreshToken
+	}
+	// Use input profileArn as fallback when refresh didn't return one
+	if newProfileArn == "" && req.ProfileArn != "" {
+		newProfileArn = req.ProfileArn
+	}
+	// Use input expiresAt as fallback when refresh returned zero
+	if expiresAt == 0 && req.ExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, req.ExpiresAt); err == nil {
+			expiresAt = t.Unix()
+		}
 	}
 
 	// 获取用户信息

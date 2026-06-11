@@ -2310,6 +2310,25 @@
       autoRefreshNewAccount(d.account?.id);
     } else toastError(t('common.failed') + ': ' + (d.error || ''));
   }
+  function normalizeCredentialItem(item) {
+    let clientMode = item.clientMode || item.client_mode || '';
+    // "type" field from Kiro durable format indicates source, map to clientMode only if valid
+    if (!clientMode && item.type) {
+      if (item.type === 'kiro-ide' || item.type === 'kiro-cli') clientMode = item.type;
+      // "kiro" alone defaults to kiro-ide
+      else if (item.type === 'kiro') clientMode = 'kiro-ide';
+    }
+    return {
+      refreshToken: item.refreshToken || item.refresh_token || '',
+      accessToken: item.accessToken || item.access_token || '',
+      clientId: item.clientId || item.client_id || '',
+      clientSecret: item.clientSecret || item.client_secret || '',
+      authMethod: item.authMethod || item.auth_method || '',
+      region: item.region || '',
+      provider: item.provider || item.idp || '',
+      clientMode
+    };
+  }
   async function importCredentials() {
     const raw = $('credJson').value.trim();
     if (!raw) { toastWarning(t('credentials.jsonError')); return; }
@@ -2320,17 +2339,20 @@
       if (json.accounts && Array.isArray(json.accounts)) {
         items = json.accounts.map(a => {
           const c = a.credentials || {};
-          return {
-            refreshToken: c.refreshToken || a.refreshToken,
-            clientId: c.clientId || a.clientId,
-            clientSecret: c.clientSecret || a.clientSecret,
+          return normalizeCredentialItem({
+            refreshToken: c.refreshToken || c.refresh_token || a.refreshToken || a.refresh_token,
+            accessToken: c.accessToken || c.access_token || a.accessToken || a.access_token,
+            clientId: c.clientId || c.client_id || a.clientId || a.client_id,
+            clientSecret: c.clientSecret || c.client_secret || a.clientSecret || a.client_secret,
             region: c.region || a.region,
-            authMethod: c.authMethod || a.authMethod,
-            provider: c.provider || a.provider || a.idp
-          };
+            authMethod: c.authMethod || c.auth_method || a.authMethod || a.auth_method,
+            provider: c.provider || a.provider || a.idp,
+            clientMode: c.clientMode || c.client_mode || a.clientMode || a.client_mode,
+            type: a.type
+          });
         });
       } else {
-        items = Array.isArray(json) ? json : [json];
+        items = (Array.isArray(json) ? json : [json]).map(normalizeCredentialItem);
       }
     } catch {
       const parsed = parseLineCredentials(raw);
