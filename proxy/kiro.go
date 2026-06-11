@@ -5,6 +5,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"kiro-go/config"
@@ -590,6 +591,7 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 	var currentToolUse *toolUseState
 	var lastAssistantContent string
 	var lastReasoningContent string
+	var producedOutput bool
 
 	for {
 		// Prelude: 12 bytes (total_len + headers_len + crc)
@@ -642,6 +644,7 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 				if normalized != "" && callback.OnText != nil {
 					callback.OnText(normalized, false)
 				}
+				producedOutput = true
 			}
 		case "reasoningContentEvent":
 			if text, ok := event["text"].(string); ok && text != "" {
@@ -649,9 +652,11 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 				if normalized != "" && callback.OnText != nil {
 					callback.OnText(normalized, true)
 				}
+				producedOutput = true
 			}
 		case "toolUseEvent":
 			currentToolUse = handleToolUseEvent(event, currentToolUse, callback)
+			producedOutput = true
 		case "meteringEvent":
 			if usage, ok := event["usage"].(float64); ok {
 				totalCredits += usage
@@ -669,6 +674,16 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 		finishToolUse(currentToolUse, callback)
 	}
 
+	// A 200 that decoded cleanly but carried no assistant text, reasoning, or
+	// tool use is an empty reply — usually a transient upstream hiccup (the
+	// shared org RPM, a momentary backend stall, or a content-policy drop that
+	// still returns 200). Surface it as an error so the caller's account
+	// failover loop rotates to another account/region and retries, instead of
+	// handing the client a blank message and recording a false success.
+	if !producedOutput {
+		return errEmptyUpstreamResponse
+	}
+
 	if callback.OnCredits != nil && totalCredits > 0 {
 		callback.OnCredits(totalCredits)
 	}
@@ -678,6 +693,11 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 	}
 	return nil
 }
+
+// errEmptyUpstreamResponse marks a 200 that produced no assistant output. Its
+// message intentionally avoids quota/auth keywords so handleAccountFailure
+// treats it as a soft failure (short cooldown + rotate), not a ban.
+var errEmptyUpstreamResponse = errors.New("empty response from upstream")
 
 func updateTokensFromEvent(event map[string]interface{}, currentInputTokens, currentOutputTokens int) (int, int) {
 	candidates := []map[string]interface{}{event}
@@ -834,12 +854,21 @@ func normalizeChunk(chunk string, previous *string) string {
 	}
 
 	*previous = chunk
-	if maxOverlap > 0 {
+	// Only treat a tail/head overlap as a sliding-window resend when it is long
+	// enough to be a real continuation. A short overlap (a shared trailing
+	// letter or two) is almost always coincidental between two independent
+	// delta frames; chopping on it drops the head of the chunk and surfaces as
+	// corrupted or empty replies.
+	if maxOverlap >= minChunkOverlap {
 		return chunk[maxOverlap:]
 	}
 
 	return chunk
 }
+
+// minChunkOverlap is the smallest tail/head overlap that normalizeChunk treats
+// as a genuine sliding-window resend rather than a coincidental match.
+const minChunkOverlap = 4
 
 func readTokenNumber(m map[string]interface{}, keys ...string) (int, bool) {
 	for _, k := range keys {

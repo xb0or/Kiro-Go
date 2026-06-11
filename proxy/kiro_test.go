@@ -45,6 +45,38 @@ func TestNormalizeChunkOverlapDelta(t *testing.T) {
 	}
 }
 
+func TestNormalizeChunkCoincidentalOverlapKept(t *testing.T) {
+	// Two independent delta frames that happen to share a short tail/head
+	// ("at" ↔ "at...") must NOT be treated as a sliding-window resend. The
+	// second chunk has to pass through whole, not get its head chopped.
+	prev := "the cat"
+
+	if got := normalizeChunk("attacks", &prev); got != "attacks" {
+		t.Fatalf("expected coincidental overlap to pass through whole, got %q", got)
+	}
+}
+
+func TestParseEventStreamEmptyResponseIsError(t *testing.T) {
+	// A 200 that decodes cleanly but carries only metering/context events (no
+	// assistant text, reasoning, or tool use) must surface as an error so the
+	// caller's failover loop retries instead of returning a blank reply.
+	stream := bytes.NewReader(bytes.Join([][]byte{
+		awsEventStreamFrame(t, "contextUsageEvent", map[string]interface{}{"contextUsagePercentage": 12.5}),
+		awsEventStreamFrame(t, "meteringEvent", map[string]interface{}{"usage": 1.25}),
+	}, nil))
+
+	var completed bool
+	err := parseEventStream(stream, &KiroStreamCallback{
+		OnComplete: func(_, _ int) { completed = true },
+	})
+	if err == nil {
+		t.Fatalf("expected empty upstream response to be an error")
+	}
+	if completed {
+		t.Fatalf("expected OnComplete to be skipped on empty response")
+	}
+}
+
 func TestParseEventStreamFinishesPendingToolUseOnEOF(t *testing.T) {
 	stream := bytes.NewReader(awsEventStreamFrame(t, "toolUseEvent", map[string]interface{}{
 		"toolUseId": "toolu_1",
