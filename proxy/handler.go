@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -824,14 +825,14 @@ func (h *Handler) handleClaudeMessagesInternal(w http.ResponseWriter, r *http.Re
 	// Stream or non-stream
 	apiKeyID := apiKeyIDFromContext(r.Context())
 	if req.Stream {
-		h.handleClaudeStream(w, kiroPayload, req.Model, thinking, thinkingResponseOpts, estimatedInputTokens, cacheProfile, apiKeyID)
+		h.handleClaudeStream(r.Context(), w, kiroPayload, req.Model, thinking, thinkingResponseOpts, estimatedInputTokens, cacheProfile, apiKeyID)
 	} else {
-		h.handleClaudeNonStream(w, kiroPayload, req.Model, thinking, thinkingResponseOpts, estimatedInputTokens, cacheProfile, apiKeyID)
+		h.handleClaudeNonStream(r.Context(), w, kiroPayload, req.Model, thinking, thinkingResponseOpts, estimatedInputTokens, cacheProfile, apiKeyID)
 	}
 }
 
 // handleClaudeStream Claude 流式响应
-func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, thinkingOpts claudeThinkingResponseOptions, estimatedInputTokens int, cacheProfile *promptCacheProfile, apiKeyID string) {
+func (h *Handler) handleClaudeStream(ctx context.Context, w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, thinkingOpts claudeThinkingResponseOptions, estimatedInputTokens int, cacheProfile *promptCacheProfile, apiKeyID string) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -872,7 +873,20 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 		messageStarted = true
 	}
 
-	for attempt := 0; attempt < maxAccountRetryAttempts; attempt++ {
+	// realErrorAttempts caps genuine failures (HTTP errors, token refresh
+	// failures) at maxAccountRetryAttempts as before. Empty upstream replies are
+	// the shared-org rate limiter's "soft 429" (confirmed: contextUsagePct ~5%,
+	// interleaved with real 429s) and are retried indefinitely instead — they do
+	// not consume this budget and never exclude the account.
+	realErrorAttempts := 0
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Warnf("[KiroAPI] Client disconnected, aborting Claude stream")
+			return
+		default:
+		}
+
 		account := h.pool.GetNextForModelExcluding(model, excluded)
 		if account == nil {
 			break
@@ -881,6 +895,10 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 			lastErr = err
 			excluded[account.ID] = true
 			h.handleAccountFailure(account, err)
+			realErrorAttempts++
+			if realErrorAttempts >= maxAccountRetryAttempts {
+				break
+			}
 			continue
 		}
 		cacheUsage := h.promptCache.Compute(account.ID, cacheProfile)
@@ -1204,9 +1222,31 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 		err := CallKiroAPI(account, payload, callback)
 		if err != nil {
 			lastErr = err
-			excluded[account.ID] = true
 			h.handleAccountFailure(account, err)
+			// An empty upstream reply is a soft rate-limit signal, not a hard
+			// failure. Since nothing has been streamed to the client yet
+			// (message_start only fires on real content), retry indefinitely
+			// without burning the failover budget or excluding the account —
+			// just pause so we don't hammer the throttled shared org and risk a
+			// suspension. The client's own disconnect (ctx.Done above) is the
+			// only stop condition.
+			if err == errEmptyUpstreamResponse {
+				if interval := emptyResponseRetryInterval(); interval > 0 {
+					select {
+					case <-ctx.Done():
+						logger.Warnf("[KiroAPI] Client disconnected during empty-response backoff, aborting Claude stream")
+						return
+					case <-time.After(interval):
+					}
+				}
+				continue
+			}
+			excluded[account.ID] = true
+			realErrorAttempts++
 			if !messageStarted {
+				if realErrorAttempts >= maxAccountRetryAttempts {
+					break
+				}
 				continue
 			}
 			h.recordFailure()
@@ -1270,6 +1310,19 @@ func (h *Handler) handleClaudeStream(w http.ResponseWriter, payload *KiroPayload
 
 	h.recordFailure()
 	h.sendClaudeError(w, 500, "api_error", lastErr.Error())
+}
+
+// emptyResponseRetryInterval is the pause between empty-upstream retries. It
+// reuses the 429 retry interval (these empty replies are the same throttle in a
+// different costume) but never goes below a 1s floor, so an indefinitely-retried
+// empty stream can't degenerate into a hot loop that hammers a throttled shared
+// org and trips an "unusual activity" suspension.
+func emptyResponseRetryInterval() time.Duration {
+	ms := config.GetEndpoint429RetryIntervalMs()
+	if ms < 1000 {
+		ms = 1000
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 func (h *Handler) sendSSE(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) {
@@ -1346,11 +1399,19 @@ func (h *Handler) recordFailure() {
 }
 
 // handleClaudeNonStream Claude 非流式响应
-func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, thinkingOpts claudeThinkingResponseOptions, estimatedInputTokens int, cacheProfile *promptCacheProfile, apiKeyID string) {
+func (h *Handler) handleClaudeNonStream(ctx context.Context, w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, thinkingOpts claudeThinkingResponseOptions, estimatedInputTokens int, cacheProfile *promptCacheProfile, apiKeyID string) {
 	excluded := make(map[string]bool)
 	var lastErr error
 
-	for attempt := 0; attempt < maxAccountRetryAttempts; attempt++ {
+	realErrorAttempts := 0
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Warnf("[KiroAPI] Client disconnected, aborting Claude response")
+			return
+		default:
+		}
+
 		account := h.pool.GetNextForModelExcluding(model, excluded)
 		if account == nil {
 			break
@@ -1359,6 +1420,10 @@ func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayl
 			lastErr = err
 			excluded[account.ID] = true
 			h.handleAccountFailure(account, err)
+			realErrorAttempts++
+			if realErrorAttempts >= maxAccountRetryAttempts {
+				break
+			}
 			continue
 		}
 		cacheUsage := h.promptCache.Compute(account.ID, cacheProfile)
@@ -1396,8 +1461,26 @@ func (h *Handler) handleClaudeNonStream(w http.ResponseWriter, payload *KiroPayl
 		err := CallKiroAPI(account, payload, callback)
 		if err != nil {
 			lastErr = err
-			excluded[account.ID] = true
 			h.handleAccountFailure(account, err)
+			// Empty upstream reply: soft rate-limit, retry indefinitely with a
+			// pause instead of failing over (see handleClaudeStream for the full
+			// rationale). Nothing has been written to the client yet.
+			if err == errEmptyUpstreamResponse {
+				if interval := emptyResponseRetryInterval(); interval > 0 {
+					select {
+					case <-ctx.Done():
+						logger.Warnf("[KiroAPI] Client disconnected during empty-response backoff, aborting Claude response")
+						return
+					case <-time.After(interval):
+					}
+				}
+				continue
+			}
+			excluded[account.ID] = true
+			realErrorAttempts++
+			if realErrorAttempts >= maxAccountRetryAttempts {
+				break
+			}
 			continue
 		}
 
@@ -1510,14 +1593,14 @@ func (h *Handler) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 
 	apiKeyID := apiKeyIDFromContext(r.Context())
 	if req.Stream {
-		h.handleOpenAIStream(w, kiroPayload, req.Model, thinking, estimatedInputTokens, apiKeyID)
+		h.handleOpenAIStream(r.Context(), w, kiroPayload, req.Model, thinking, estimatedInputTokens, apiKeyID)
 	} else {
-		h.handleOpenAINonStream(w, kiroPayload, req.Model, thinking, estimatedInputTokens, apiKeyID)
+		h.handleOpenAINonStream(r.Context(), w, kiroPayload, req.Model, thinking, estimatedInputTokens, apiKeyID)
 	}
 }
 
 // handleOpenAIStream OpenAI 流式响应
-func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyID string) {
+func (h *Handler) handleOpenAIStream(ctx context.Context, w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyID string) {
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -1535,7 +1618,18 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 	excluded := make(map[string]bool)
 	var lastErr error
 
-	for attempt := 0; attempt < maxAccountRetryAttempts; attempt++ {
+	// Empty upstream replies are the shared-org rate limiter's "soft 429" and are
+	// retried indefinitely without burning the failover budget or excluding the
+	// account; genuine failures still cap at maxAccountRetryAttempts.
+	realErrorAttempts := 0
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Warnf("[KiroAPI] Client disconnected, aborting OpenAI stream")
+			return
+		default:
+		}
+
 		account := h.pool.GetNextForModelExcluding(model, excluded)
 		if account == nil {
 			break
@@ -1544,6 +1638,10 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 			lastErr = err
 			excluded[account.ID] = true
 			h.handleAccountFailure(account, err)
+			realErrorAttempts++
+			if realErrorAttempts >= maxAccountRetryAttempts {
+				break
+			}
 			continue
 		}
 
@@ -1831,9 +1929,28 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 		err := CallKiroAPI(account, payload, callback)
 		if err != nil {
 			lastErr = err
-			excluded[account.ID] = true
 			h.handleAccountFailure(account, err)
+			// Empty upstream reply is a soft rate-limit signal; nothing has been
+			// streamed yet, so retry indefinitely (paused, ctx-aware) without
+			// burning the failover budget or excluding the account. See
+			// emptyResponseRetryInterval for the suspension-safety rationale.
+			if err == errEmptyUpstreamResponse {
+				if interval := emptyResponseRetryInterval(); interval > 0 {
+					select {
+					case <-ctx.Done():
+						logger.Warnf("[KiroAPI] Client disconnected during empty-response backoff, aborting OpenAI stream")
+						return
+					case <-time.After(interval):
+					}
+				}
+				continue
+			}
+			excluded[account.ID] = true
+			realErrorAttempts++
 			if !responseStarted {
+				if realErrorAttempts >= maxAccountRetryAttempts {
+					break
+				}
 				continue
 			}
 			h.recordFailure()
@@ -1906,11 +2023,22 @@ func (h *Handler) handleOpenAIStream(w http.ResponseWriter, payload *KiroPayload
 }
 
 // handleOpenAINonStream OpenAI 非流式响应
-func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyID string) {
+func (h *Handler) handleOpenAINonStream(ctx context.Context, w http.ResponseWriter, payload *KiroPayload, model string, thinking bool, estimatedInputTokens int, apiKeyID string) {
 	excluded := make(map[string]bool)
 	var lastErr error
 
-	for attempt := 0; attempt < maxAccountRetryAttempts; attempt++ {
+	// Empty upstream replies are the shared-org rate limiter's "soft 429" and are
+	// retried indefinitely without burning the failover budget or excluding the
+	// account; genuine failures still cap at maxAccountRetryAttempts.
+	realErrorAttempts := 0
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Warnf("[KiroAPI] Client disconnected, aborting OpenAI response")
+			return
+		default:
+		}
+
 		account := h.pool.GetNextForModelExcluding(model, excluded)
 		if account == nil {
 			break
@@ -1919,6 +2047,10 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayl
 			lastErr = err
 			excluded[account.ID] = true
 			h.handleAccountFailure(account, err)
+			realErrorAttempts++
+			if realErrorAttempts >= maxAccountRetryAttempts {
+				break
+			}
 			continue
 		}
 
@@ -1948,8 +2080,26 @@ func (h *Handler) handleOpenAINonStream(w http.ResponseWriter, payload *KiroPayl
 		err := CallKiroAPI(account, payload, callback)
 		if err != nil {
 			lastErr = err
-			excluded[account.ID] = true
 			h.handleAccountFailure(account, err)
+			// Soft rate-limit (empty reply): nothing has been written to the
+			// client yet, so retry indefinitely with a pause instead of burning
+			// the failover budget or excluding the account.
+			if err == errEmptyUpstreamResponse {
+				if interval := emptyResponseRetryInterval(); interval > 0 {
+					select {
+					case <-ctx.Done():
+						logger.Warnf("[KiroAPI] Client disconnected during empty-response backoff, aborting OpenAI response")
+						return
+					case <-time.After(interval):
+					}
+				}
+				continue
+			}
+			excluded[account.ID] = true
+			realErrorAttempts++
+			if realErrorAttempts >= maxAccountRetryAttempts {
+				break
+			}
 			continue
 		}
 
