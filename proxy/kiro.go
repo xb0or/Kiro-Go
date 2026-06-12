@@ -598,6 +598,10 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 	var producedOutput bool
 	eventCounts := map[string]int{}
 	totalEvents := 0
+	// lastContextUsagePct retains the most recent contextUsagePercentage so an
+	// empty reply can be classified: a near-100% value points at an oversized
+	// payload (window exhausted), a low value points at a content-policy drop.
+	lastContextUsagePct := -1.0
 
 	for {
 		// Prelude: 12 bytes (total_len + headers_len + crc)
@@ -672,6 +676,7 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 			}
 		case "contextUsageEvent":
 			if pct, ok := event["contextUsagePercentage"].(float64); ok {
+				lastContextUsagePct = pct
 				if callback.OnContextUsage != nil {
 					callback.OnContextUsage(pct)
 				}
@@ -690,8 +695,8 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 	// failover loop rotates to another account/region and retries, instead of
 	// handing the client a blank message and recording a false success.
 	if !producedOutput {
-		logger.Warnf("[KiroAPI] Empty upstream response: events=%d breakdown=%s inputTokens=%d outputTokens=%d",
-			totalEvents, formatEventCounts(eventCounts), inputTokens, outputTokens)
+		logger.Warnf("[KiroAPI] Empty upstream response: events=%d breakdown=%s inputTokens=%d outputTokens=%d contextUsagePct=%.1f",
+			totalEvents, formatEventCounts(eventCounts), inputTokens, outputTokens, lastContextUsagePct)
 		return errEmptyUpstreamResponse
 	}
 
