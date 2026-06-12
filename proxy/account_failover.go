@@ -113,6 +113,7 @@ func (h *Handler) handleAccountFailure(account *config.Account, err error) {
 	case isAuthErrorMessage(errMsg):
 		h.disableAccount(account, "BANNED", "Authentication failed - token invalid or expired")
 	default:
+		logger.Warnf("[AccountFailover] Soft failure, cooldown+rotate %s: %v", account.Email, err)
 		h.pool.RecordError(account.ID, false)
 	}
 }

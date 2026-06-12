@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -545,6 +546,9 @@ func CallKiroAPI(account *config.Account, payload *KiroPayload, callback *KiroSt
 			logger.Debugf("[KiroAPI] Endpoint accepted: %s status=200", logContext)
 			err = parseEventStream(resp.Body, callback)
 			resp.Body.Close()
+			if err == errEmptyUpstreamResponse {
+				logger.Warnf("[KiroAPI] Empty upstream response on %s region=%s", logContext, dispatchRegion)
+			}
 			return err
 		}
 
@@ -592,6 +596,8 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 	var lastAssistantContent string
 	var lastReasoningContent string
 	var producedOutput bool
+	eventCounts := map[string]int{}
+	totalEvents := 0
 
 	for {
 		// Prelude: 12 bytes (total_len + headers_len + crc)
@@ -635,6 +641,9 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 		}
 
 		inputTokens, outputTokens = updateTokensFromEvent(event, inputTokens, outputTokens)
+
+		eventCounts[eventType]++
+		totalEvents++
 
 		// Dispatch by event type.
 		switch eventType {
@@ -681,6 +690,8 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 	// failover loop rotates to another account/region and retries, instead of
 	// handing the client a blank message and recording a false success.
 	if !producedOutput {
+		logger.Warnf("[KiroAPI] Empty upstream response: events=%d breakdown=%s inputTokens=%d outputTokens=%d",
+			totalEvents, formatEventCounts(eventCounts), inputTokens, outputTokens)
 		return errEmptyUpstreamResponse
 	}
 
@@ -698,6 +709,26 @@ func parseEventStream(body io.Reader, callback *KiroStreamCallback) error {
 // message intentionally avoids quota/auth keywords so handleAccountFailure
 // treats it as a soft failure (short cooldown + rotate), not a ban.
 var errEmptyUpstreamResponse = errors.New("empty response from upstream")
+
+// formatEventCounts renders an event-type histogram as a stable, comma-joined
+// "type=count" string for diagnostic logging. Keys are sorted so the output is
+// deterministic across requests. An empty map renders as "none", which is the
+// telling signal for a truly empty stream (no events decoded at all).
+func formatEventCounts(counts map[string]int) string {
+	if len(counts) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, counts[k]))
+	}
+	return strings.Join(parts, ",")
+}
 
 func updateTokensFromEvent(event map[string]interface{}, currentInputTokens, currentOutputTokens int) (int, int) {
 	candidates := []map[string]interface{}{event}
