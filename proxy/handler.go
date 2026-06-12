@@ -1232,11 +1232,9 @@ func (h *Handler) handleClaudeStream(ctx context.Context, w http.ResponseWriter,
 			// only stop condition.
 			if err == errEmptyUpstreamResponse {
 				if interval := emptyResponseRetryInterval(); interval > 0 {
-					select {
-					case <-ctx.Done():
+					if !waitStreamKeepAlive(ctx, w, flusher, interval) {
 						logger.Warnf("[KiroAPI] Client disconnected during empty-response backoff, aborting Claude stream")
 						return
-					case <-time.After(interval):
 					}
 				}
 				continue
@@ -1325,6 +1323,46 @@ func emptyResponseRetryInterval() time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
+// emptyResponseNonStreamDeadline caps how long a non-streaming request will keep
+// retrying empty upstream replies. Unlike streaming paths, non-stream responses
+// can't emit keepalive bytes before the final JSON, so an indefinite retry would
+// silently blow past proxy read timeouts (Cloudflare's ~100s) and surface as a
+// 524. Capping below that turns the unavoidable failure into a clean, retryable
+// 503 instead. Streaming paths have no such cap — they keepalive indefinitely.
+const emptyResponseNonStreamDeadline = 90 * time.Second
+
+// streamKeepAliveInterval is how often a keepalive is emitted while a stream is
+// blocked retrying empty upstream replies. It sits well under common proxy read
+// timeouts (Cloudflare's 100s, nginx's 60s default) so an indefinitely-retried
+// stream keeps bytes flowing instead of tripping a 524 origin-timeout.
+const streamKeepAliveInterval = 15 * time.Second
+
+// waitStreamKeepAlive sleeps for total while emitting ": keepalive" SSE comment
+// lines every streamKeepAliveInterval. Comment lines (leading ':') are ignored
+// by every SSE client and by the Anthropic/OpenAI stream parsers, so they are
+// safe to send before message_start. Returns false if the client disconnected
+// (ctx cancelled) mid-wait, in which case the caller must abort.
+func waitStreamKeepAlive(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, total time.Duration) bool {
+	deadline := time.Now().Add(total)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return true
+		}
+		tick := streamKeepAliveInterval
+		if remaining < tick {
+			tick = remaining
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(tick):
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
 func (h *Handler) sendSSE(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) {
 	jsonData, _ := json.Marshal(data)
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(jsonData))
@@ -1404,6 +1442,7 @@ func (h *Handler) handleClaudeNonStream(ctx context.Context, w http.ResponseWrit
 	var lastErr error
 
 	realErrorAttempts := 0
+	emptyResponseDeadline := time.Now().Add(emptyResponseNonStreamDeadline)
 	for {
 		select {
 		case <-ctx.Done():
@@ -1462,10 +1501,18 @@ func (h *Handler) handleClaudeNonStream(ctx context.Context, w http.ResponseWrit
 		if err != nil {
 			lastErr = err
 			h.handleAccountFailure(account, err)
-			// Empty upstream reply: soft rate-limit, retry indefinitely with a
-			// pause instead of failing over (see handleClaudeStream for the full
-			// rationale). Nothing has been written to the client yet.
+			// Empty upstream reply: soft rate-limit. Unlike the streaming paths,
+			// a non-stream response can't emit keepalive bytes before the final
+			// JSON, so an indefinitely-retried empty reply would eventually trip
+			// the proxy's read timeout (a 524). Cap the retry window instead and
+			// return a retryable 503 so the client can retry cleanly.
 			if err == errEmptyUpstreamResponse {
+				if time.Now().After(emptyResponseDeadline) {
+					logger.Warnf("[KiroAPI] Empty-response retry budget exhausted (%s), returning 503", emptyResponseNonStreamDeadline)
+					h.recordFailure()
+					h.sendClaudeError(w, 503, "api_error", "upstream returned empty responses; please retry")
+					return
+				}
 				if interval := emptyResponseRetryInterval(); interval > 0 {
 					select {
 					case <-ctx.Done():
@@ -1936,11 +1983,9 @@ func (h *Handler) handleOpenAIStream(ctx context.Context, w http.ResponseWriter,
 			// emptyResponseRetryInterval for the suspension-safety rationale.
 			if err == errEmptyUpstreamResponse {
 				if interval := emptyResponseRetryInterval(); interval > 0 {
-					select {
-					case <-ctx.Done():
+					if !waitStreamKeepAlive(ctx, w, flusher, interval) {
 						logger.Warnf("[KiroAPI] Client disconnected during empty-response backoff, aborting OpenAI stream")
 						return
-					case <-time.After(interval):
 					}
 				}
 				continue
@@ -2031,6 +2076,7 @@ func (h *Handler) handleOpenAINonStream(ctx context.Context, w http.ResponseWrit
 	// retried indefinitely without burning the failover budget or excluding the
 	// account; genuine failures still cap at maxAccountRetryAttempts.
 	realErrorAttempts := 0
+	emptyResponseDeadline := time.Now().Add(emptyResponseNonStreamDeadline)
 	for {
 		select {
 		case <-ctx.Done():
@@ -2081,10 +2127,17 @@ func (h *Handler) handleOpenAINonStream(ctx context.Context, w http.ResponseWrit
 		if err != nil {
 			lastErr = err
 			h.handleAccountFailure(account, err)
-			// Soft rate-limit (empty reply): nothing has been written to the
-			// client yet, so retry indefinitely with a pause instead of burning
-			// the failover budget or excluding the account.
+			// Soft rate-limit (empty reply): a non-stream response can't emit
+			// keepalive bytes before the final JSON, so an indefinitely-retried
+			// empty reply would eventually trip the proxy's read timeout (a 524).
+			// Cap the retry window and return a retryable 503 instead.
 			if err == errEmptyUpstreamResponse {
+				if time.Now().After(emptyResponseDeadline) {
+					logger.Warnf("[KiroAPI] Empty-response retry budget exhausted (%s), returning 503", emptyResponseNonStreamDeadline)
+					h.recordFailure()
+					h.sendOpenAIError(w, 503, "server_error", "upstream returned empty responses; please retry")
+					return
+				}
 				if interval := emptyResponseRetryInterval(); interval > 0 {
 					select {
 					case <-ctx.Done():
